@@ -28,7 +28,7 @@ FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libfreetype6 libgraphite2-3 libharfbuzz0b \
-    libicu76 libpng16-16 zlib1g \
+    libicu76 libpng16-16t64 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /src/target/release/automemorydoll-compiler /usr/local/bin/automemorydoll-compiler
