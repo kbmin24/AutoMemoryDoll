@@ -6,6 +6,7 @@ version = 4
 name = "automemorydoll-compiler"
 version = "0.1.0"
 dependencies = [
+ "minijinja",
  "serde_json",
  "uuid",
 ]
@@ -85,6 +86,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "minijinja"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90086695417a271bc96e6cb50618555614ca48fa3bb0d9aa96e3468b0f84431e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "once_cell"

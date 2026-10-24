@@ -1,12 +1,16 @@
 use automemorydoll_compiler::job::Job;
 use automemorydoll_compiler::output::write_failure;
+use automemorydoll_compiler::render::render_tex;
 use std::path::Path;
 
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     let input = args.get(1).map(Path::new).unwrap_or(Path::new("/input"));
     let output = args.get(2).map(Path::new).unwrap_or(Path::new("/output"));
-    let message = match Job::load(input) {
+    let message = match Job::load(input)
+        .map_err(|error| error.to_string())
+        .and_then(|job| render_tex(&job.source, &job.data).map_err(|error| error.to_string()))
+    {
         Ok(_) => "PDF compilation is not implemented yet".to_string(),
         Err(error) => error.to_string(),
     };
