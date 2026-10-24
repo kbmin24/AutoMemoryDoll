@@ -145,5 +145,8 @@ vite.config.ts.timestamp-*
 # Astro generated types
 .astro/
 
+# Rust build artifacts
+compiler/target/
+
 # Turbo Repo
 .turbo
