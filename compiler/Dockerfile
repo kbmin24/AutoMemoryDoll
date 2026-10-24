@@ -22,6 +22,7 @@ RUN curl --fail --location --retry 3 \
     && echo '425685e124746c15ba9bb8e0596bdaad98fce886afa347fbcf9ec0e9acd7fe79  /tmp/bundle.tar' | sha256sum --check - \
     && mkdir /bundle \
     && tar -xf /tmp/bundle.tar -C /bundle \
+    && chmod -R a+rX /bundle \
     && rm /tmp/bundle.tar
 
 FROM debian:trixie-slim
@@ -38,4 +39,7 @@ ENV TECTONIC_BUNDLE_PATH=/bundle \
     TECTONIC_SCRATCH_DIR=/tmp/tectonic \
     HOME=/tmp
 USER 65532:65532
+RUN test -r /bundle/SHA256SUM \
+    && test -r /bundle/tectonic-format-latex.tex \
+    && test -r /bundle/latex.ltx
 ENTRYPOINT ["/usr/local/bin/automemorydoll-compiler"]
