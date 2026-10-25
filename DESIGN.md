@@ -8,6 +8,8 @@ AutoMemoryDoll is a web-based document generation platform intended to go beyond
 
 The first milestone is **only the compiler container, with single-document generation**. Batch support comes later. Build the rest of the platform afterward. Data binding and dataset management are deferred beyond the MVP. An LLM worker is outside the MVP.
 
+The next MVP application milestone covers user authentication, adding/deleting/managing templates, and generating one PDF from user-entered values.
+
 ## Compiler container: decided behavior
 
 ### Technology and isolation
@@ -35,7 +37,7 @@ job/
   data.json
 ```
 
-`template.tex` has a fixed filename. The backend resolves database bindings and transforms the request before dispatch, so `data.json` contains concrete values only. The worker does not access the database.
+`template.tex` has a fixed filename. For the MVP, the backend writes user-entered concrete values to `data.json`; future data bindings are resolved before dispatch. The Rust compiler container does not access the database. The separate Node.js queue consumer may access PostgreSQL for job state, as approved in the MVP application design.
 `data.json` must have a JSON object at its top level; any other top-level type is a job error.
 
 Each top-level key in `data.json` becomes a MiniJinja template variable. There is no reserved `TeXallowList` key.
@@ -75,31 +77,44 @@ Batch generation is a later milestone, not part of the first compiler-container 
 
 ## MVP application: decided behavior
 
+The owner approved the [MVP application design](docs/superpowers/specs/2026-10-25-mvp-application-design.md) on 2026-10-25. Its proposals are now decisions for this milestone; this record highlights the main contracts, while the approved design gives their details.
+
 ### Services and flow
 
 - The frontend uses Vue.js and polls for generation status.
 - The backend API uses Express on Node.js with TypeScript.
 - The backend enqueues generation jobs in Redis using BullMQ. A separate Node.js/TypeScript queue consumer service, housed under `backend/`, consumes jobs and eventually launches compiler containers. The consumer is not part of the first compiler-container milestone.
-- The backend resolves data bindings before dispatching concrete JSON. Data binding is deferred beyond the MVP; what transformation is needed for the MVP remains open.
+- The backend dispatches concrete JSON. Data binding is deferred beyond the MVP.
 - Generated PDFs and job history are retained. PDF files live on the backend filesystem in a fixed directory named by job ID.
 - Use an abstract storage class with a default filesystem implementation, and an abstract PDF generator class with a compiler-backed implementation.
-- Authentication uses JWT. Its token lifecycle and authorization rules remain open.
+- Authentication uses JWT in a short-lived HttpOnly, Secure, SameSite cookie with CSRF protection. There are `user`, `admin`, and `owner` roles. Accounts are created by an administrator through a web screen rather than through public self-signup. Administrators manage accounts but do not gain access to other users' templates, jobs, or PDFs. The sole owner can perform administrator actions and additionally grant or remove `admin` privileges from users; ownership does not change the privacy of other users' work. Each user's work is private to that user. The owner account is created by a one-time server setup command.
+- When adding a template, the user may define a data shape. This option is on by default, but the user can choose not to define one. Each shape field has a template variable name, a display name, an optional/required setting, and one of four types: `text`, `longtext`, `number`, or `boolean`. `longtext` is a string like `text`, but uses a textarea in the frontend. The app generates a form from a defined shape when generating a single PDF. Without a defined shape, the generation screen provides a box for the user to enter JSON.
+- The generated form omits a blank optional field's key from the JSON sent for generation. An optional boolean therefore has an unset state distinct from `false`.
+- Users can edit an existing template, including its TeX/support files and data-shape field definitions.
+- Users can manage a directory-like workspace for each template and keep reusable template files there. Its screen has a directory browser on the left and a textarea editor for template content on the right. The directory browser supports creating, uploading, renaming, moving, and deleting files and folders. The editor opens UTF-8 text files; binary files such as images are managed through upload/download instead of text editing. The generation screen also accepts files supplied for that single job. Workspace file and directory names use the conservative ASCII validation and storage boundaries in the approved design.
+- Template workspaces use filesystem directories. On a generation request, the backend snapshots the current template files and that job's resource uploads into a private job input directory before enqueuing. A later workspace edit does not change an already submitted job.
+- Per-job resource uploads use user-visible aliases rather than user-entered filesystem paths. The editor can insert `@resource(alias)` into UTF-8 template text. During snapshot preparation, the backend validates each alias, stores the upload under a server-generated name, and replaces the exact token with the internal relative path. Missing or duplicate aliases fail before queueing. The four data-shape field types remain unchanged.
+- MVP generation uses plain values entered by the user. There is no data binding to external or stored datasets.
 
 ### PostgreSQL data model
 
-The owner specified these MVP records. Column names below reflect the discussion; exact SQL names, types where unstated, constraints, and migrations remain open.
+The owner specified these MVP records. The approved application design adds the fields needed for roles, disabling accounts, token invalidation, data shape, soft deletion, and job retention. Exact SQL names, types where unstated, constraints, and migrations are implementation-plan details.
 
 ```text
 users
   id: UUID primary key
   username
   password_hash
+  role: user|admin|owner
+  disabled
+  token_version
 
 templates
   id: UUID primary key; also the template directory identifier
   ownedBy: foreign key to users.id
   name
-  manifest: flexible JSON; no MVP fields are currently defined
+  manifest: versioned JSON containing the optional data shape
+  deleted_at
 
 generation_jobs
   id
@@ -107,12 +122,13 @@ generation_jobs
   user: foreign key to users
   batch_count: integer
   timestamp
-  status: { status: "ok|failed|generating", message: "..." }
+  status: { status: "queued|generating|ok|failed", message: "..." }
+  PDF filename and lifecycle timestamps
 ```
 
 Indexes requested: primary-key B-tree indexes on `users.id` and `templates.id`; an index on `templates.ownedBy`; and a B-tree index on `(generation_jobs.user, generation_jobs.timestamp)`. PostgreSQL creates indexes for primary keys, so avoid duplicate explicit `id` indexes. The owner has not specified a separate index on `generation_jobs.template_ID`.
 
-No dataset tables are included in the MVP. No database-backed session table is planned because authentication uses JWT. Whether queued jobs need a `queued` status before `generating` is open.
+No dataset tables are included in the MVP. No database-backed session table is planned because authentication uses JWT. PDFs and job history are retained without automatic expiry in this MVP. A deleted template is soft-deleted so existing jobs and their PDFs remain available.
 
 ## Repository structure
 
@@ -139,13 +155,12 @@ Typst, Mustache, Carbone, ODT/DOCX templating, a custom templating engine, LaTTe
 
 ## Open decisions to resolve before relevant implementation
 
-- Product scope and acceptance criteria beyond the compiler milestone.
+- Product scope beyond this approved MVP.
 - Batch file layout and output naming; any compiler input/output behavior not specified above.
 - Later TeX sanitization, resource limits, and the remaining sandbox policy.
 - Whether separately bundled fonts or assets are needed beyond the selected full Tectonic 2022 bundle.
-- JWT lifecycle and authorization, template sharing, template file storage and upload rules.
-- Exact PostgreSQL schema details, job status lifecycle, migrations, and PDF retention policy.
-- API routes, BullMQ payloads, queue consumer-to-container protocol, error propagation, and deployment topology.
-- Frontend interaction design and remaining repository/build conventions.
+- Template sharing beyond this private-template MVP.
+- Production resource ceilings for CPU, memory, process count, and wall time; this must be decided before production exposure.
+- Routine API route names, migration layout, package manager, detailed queue payloads, and remaining build/test conventions are left to implementation planning.
 
 The owner wants agents to ask about unresolved design choices that change product behavior, architecture, the data model, a public contract, or a security boundary. Agents should make routine implementation choices without asking a stream of tiny questions, while recording consequential choices for review.
