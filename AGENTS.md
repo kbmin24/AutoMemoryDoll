@@ -17,6 +17,21 @@
 - `frontend/` will contain the Vue.js application.
 - The root `package.json` will hold project metadata and commands for running the project.
 
+## Code Style and Readability
+
+- Prioritize readability and maintainability over compactness.
+- Do not minimize line count or compress code unnecessarily.
+- Use conventional indentation, spacing, and blank lines.
+- Avoid multiple statements on a single line.
+- Prefer clear control flow over deeply nested ternary expressions.
+- Break complex expressions into meaningful intermediate variables.
+- Separate logically distinct operations with blank lines.
+- Keep functions focused and reasonably sized.
+- Follow existing project conventions and language-specific style guides.
+- Run the appropriate formatter after modifying code.
+- Avoid unrelated refactoring solely for stylistic reasons.
+
+
 ## Decisions that must remain visible
 
 - Treat uploaded templates and resources as untrusted. For the first compiler milestone, use Tectonic's untrusted mode through its Rust library API plus the isolated container under gVisor. Verify the exact API setting. Additional TeX command sanitization is deferred to a later security review; do not claim that untrusted mode alone confines all TeX file access.
