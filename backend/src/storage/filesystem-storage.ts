@@ -1,0 +1,302 @@
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
+import type { Readable } from 'node:stream';
+import { Storage, type TreeEntry } from './storage.js';
+import { validateId, validateSegments } from './paths.js';
+
+const FILE_LIMIT = 20 * 1024 * 1024;
+const WORKSPACE_LIMIT = 100 * 1024 * 1024;
+const TEXT_LIMIT = 1024 * 1024;
+
+export class FileSystemStorage extends Storage {
+  private readonly root: string;
+  private readonly locks = new Map<string, Promise<void>>();
+
+  constructor(root: string) {
+    super();
+    this.root = resolve(root);
+  }
+
+  private template(id: string): string { return join(this.root, 'templates', validateId(id)); }
+  private job(id: string): string { return join(this.root, 'jobs', validateId(id)); }
+  private pdf(id: string): string { return join(this.root, 'pdfs', validateId(id)); }
+
+  private async locked<T>(id: string, task: () => Promise<T>): Promise<T> {
+    const prior = this.locks.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((done) => { release = done; });
+    this.locks.set(id, current);
+    await prior;
+    try { return await task(); }
+    finally { release(); if (this.locks.get(id) === current) this.locks.delete(id); }
+  }
+
+  private async ordinary(path: string, kind?: 'file' | 'directory'): Promise<void> {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory()) ||
+        (kind === 'file' && (!info.isFile() || info.nlink !== 1)) ||
+        (kind === 'directory' && !info.isDirectory())) {
+      throw new Error('Unsupported filesystem entry');
+    }
+  }
+
+  // Validates that the path exists and is of the expected kind, or that it does not exist if leafExists is false.
+  private async target(id: string, segments: string[], leafExists: boolean): Promise<string> {
+    const names = validateSegments(segments);
+    let path = this.template(id);
+    await this.ordinary(path, 'directory');
+    for (const name of names.slice(0, -1)) {
+      path = join(path, name);
+      await this.ordinary(path, 'directory');
+    }
+    path = join(path, names.at(-1)!);
+    if (leafExists) await this.ordinary(path);
+    else {
+      try { await lstat(path); throw new Error('Path already exists'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
+    return path;
+  }
+
+  private async entries(id: string): Promise<TreeEntry[]> {
+    const result: TreeEntry[] = [];
+    const visit = async (dir: string, parts: string[]): Promise<void> => {
+      for (const name of await readdir(dir)) {
+        const segments = [...parts, name];
+        validateSegments(segments);
+        const path = join(dir, name);
+        await this.ordinary(path);
+        const info = await lstat(path);
+        const kind = info.isDirectory() ? 'directory' : 'file';
+        result.push({ name, kind, segments });
+        if (kind === 'directory') await visit(path, segments);
+      }
+    };
+    const root = this.template(id);
+    await this.ordinary(root, 'directory');
+    await visit(root, []);
+    return result;
+  }
+
+  private async workspaceBytes(id: string): Promise<number> {
+    let total = 0;
+    for (const entry of await this.entries(id)) {
+      if (entry.kind === 'file') total += (await lstat(join(this.template(id), ...entry.segments))).size;
+    }
+    return total;
+  }
+
+  async uploadStagingDirectory(): Promise<string> {
+    const dir = join(this.root, 'upload-staging');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await this.ordinary(dir, 'directory');
+    return dir;
+  }
+
+  private async stagedFile(path: string): Promise<number> {
+    const dir = await this.uploadStagingDirectory();
+    if (dirname(resolve(path)) !== dir) throw new Error('Upload is outside staging directory');
+    await this.ordinary(path, 'file');
+    return (await lstat(path)).size;
+  }
+
+  async createTemplateRoot(id: string): Promise<void> {
+    await this.locked(id, async () => {
+      await mkdir(join(this.root, 'templates'), { recursive: true });
+      await this.ordinary(join(this.root, 'templates'), 'directory');
+      await mkdir(this.template(id));
+    });
+  }
+
+  async removeTemplateRoot(id: string): Promise<void> {
+    await this.locked(id, async () => {
+      await this.entries(id);
+      await rm(this.template(id), { recursive: true });
+    });
+  }
+
+  async listTemplateTree(id: string): Promise<TreeEntry[]> { return this.locked(id, () => this.entries(id)); }
+
+  async createDirectory(id: string, segments: string[]): Promise<void> {
+    await this.locked(id, async () => { await mkdir(await this.target(id, segments, false)); });
+  }
+
+  async readText(id: string, segments: string[]): Promise<string> {
+    return this.locked(id, async () => {
+      const path = await this.target(id, segments, true);
+      await this.ordinary(path, 'file');
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.nlink !== 1 || info.size > TEXT_LIMIT) throw new Error('Not an editable text file');
+        const bytes = await file.readFile();
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        if (text.includes('\0')) throw new Error('Not an editable text file');
+        return text;
+      } finally { await file.close(); }
+    });
+  }
+
+  async writeText(id: string, segments: string[], text: string): Promise<void> {
+    if (typeof text !== 'string' || Buffer.byteLength(text) > TEXT_LIMIT) throw new Error('Text size limit exceeded');
+    await this.locked(id, async () => {
+      const names = validateSegments(segments);
+      const path = await this.target(id, names, false).catch(async (error) => {
+        if ((error as Error).message !== 'Path already exists') throw error;
+        const existing = await this.target(id, names, true);
+        await this.ordinary(existing, 'file');
+        return existing;
+      });
+      let oldSize = 0;
+      try { oldSize = (await stat(path)).size; } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (await this.workspaceBytes(id) - oldSize + Buffer.byteLength(text) > WORKSPACE_LIMIT) throw new Error('Workspace size limit exceeded');
+      const temp = join(this.template(id), `.write-${randomUUID()}`);
+      try {
+        const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        try { await file.writeFile(text); await file.sync(); }
+        finally { await file.close(); }
+        await rename(temp, path);
+      } finally { await rm(temp, { force: true }); }
+    });
+  }
+
+  async moveUpload(id: string, segments: string[], temporaryPath: string): Promise<void> {
+    await this.locked(id, async () => {
+      await this.stagedFile(temporaryPath);
+      try {
+        const path = await this.target(id, segments, false);
+        const remaining = WORKSPACE_LIMIT - await this.workspaceBytes(id);
+        const size = await this.stagedFile(temporaryPath);
+        if (size > FILE_LIMIT || size > remaining) throw new Error('File size limit exceeded');
+        await this.target(id, segments, false);
+        await rename(temporaryPath, path);
+      } finally {
+        await rm(temporaryPath, { force: true });
+      }
+    });
+  }
+
+  async openDownload(id: string, segments: string[]): Promise<Readable> {
+    return this.locked(id, async () => {
+      const path = await this.target(id, segments, true);
+      await this.ordinary(path, 'file');
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink !== 1) { await file.close(); throw new Error('Unsupported filesystem entry'); }
+      return file.createReadStream();
+    });
+  }
+
+  async move(id: string, from: string[], to: string[]): Promise<void> {
+    await this.locked(id, async () => {
+      if (from.length === 1 && from[0] === 'template.tex') throw new Error('Cannot move template.tex');
+      const source = await this.target(id, from, true);
+      const destination = await this.target(id, to, false);
+      if (destination.startsWith(source + sep)) throw new Error('Cannot move directory into itself');
+      await rename(source, destination);
+    });
+  }
+
+  async delete(id: string, segments: string[]): Promise<void> {
+    await this.locked(id, async () => {
+      if (segments.length === 1 && segments[0] === 'template.tex') throw new Error('Cannot delete template.tex');
+      const path = await this.target(id, segments, true);
+      const info = await lstat(path);
+      if (info.isDirectory()) {
+        await this.entries(id);
+        await rm(path, { recursive: true });
+      } else {
+        await this.ordinary(path, 'file');
+        await rm(path);
+      }
+    });
+  }
+
+  async snapshot(id: string, jobId: string): Promise<string> {
+    return this.locked(id, async () => {
+      const jobRoot = this.job(jobId);
+      await mkdir(join(this.root, 'jobs'), { recursive: true });
+      await this.ordinary(join(this.root, 'jobs'), 'directory');
+      await mkdir(jobRoot);
+      const input = join(this.job(jobId), 'input');
+      const template = join(input, 'template');
+      const entries = await this.entries(id);
+      await mkdir(template, { recursive: true });
+      await mkdir(join(input, 'resources'));
+      try {
+        for (const entry of entries) {
+          const dest = join(template, ...entry.segments);
+          if (entry.kind === 'directory') await mkdir(dest);
+          else {
+            const source = await this.target(id, entry.segments, true);
+            await this.ordinary(source, 'file');
+            await copyFile(source, dest);
+          }
+        }
+        return input;
+      } catch (error) { await rm(this.job(jobId), { recursive: true, force: true }); throw error; }
+    });
+  }
+
+  async stageResource(jobId: string, storedName: string, temporaryPath: string): Promise<void> {
+    await this.locked(`resource:${jobId}`, async () => {
+      await this.stagedFile(temporaryPath);
+      try {
+        validateSegments([storedName]);
+        const dir = join(this.job(jobId), 'input', 'resources');
+        await this.ordinary(dir, 'directory');
+        let total = 0;
+        for (const name of await readdir(dir)) {
+          validateSegments([name]);
+          const path = join(dir, name);
+          await this.ordinary(path, 'file');
+          total += (await lstat(path)).size;
+        }
+        const size = await this.stagedFile(temporaryPath);
+        if (size > FILE_LIMIT || size > WORKSPACE_LIMIT - total) throw new Error('File size limit exceeded');
+        const destination = join(dir, storedName);
+        try { await lstat(destination); throw new Error('Path already exists'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        await rename(temporaryPath, destination);
+      } finally {
+        await rm(temporaryPath, { force: true });
+      }
+    });
+  }
+
+  async savePdf(jobId: string, source: string, filename: string): Promise<string> {
+    validateId(jobId);
+    if (!filename.endsWith('.pdf') || filename !== `${validateId(filename.slice(0, -4))}.pdf`) throw new Error('Invalid PDF filename');
+    const output = join(this.job(jobId), 'output');
+    const resolved = resolve(source);
+    if (dirname(resolved) !== output) throw new Error('PDF outside job output');
+    await this.ordinary(output, 'directory');
+    await this.ordinary(resolved, 'file');
+    const dir = this.pdf(jobId);
+    await mkdir(dir, { recursive: true });
+    await this.ordinary(dir, 'directory');
+    const target = join(dir, filename);
+    await copyFile(resolved, target);
+    return target;
+  }
+
+  async openPdf(jobId: string, filename: string): Promise<Readable> {
+    validateId(jobId);
+    if (!filename.endsWith('.pdf') || filename !== `${validateId(filename.slice(0, -4))}.pdf`) throw new Error('Invalid PDF filename');
+    const path = join(this.pdf(jobId), filename);
+    await this.ordinary(this.pdf(jobId), 'directory');
+    await this.ordinary(path, 'file');
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await file.stat();
+    if (!info.isFile() || info.nlink !== 1) { await file.close(); throw new Error('Unsupported filesystem entry'); }
+    return file.createReadStream();
+  }
+
+  async cleanupJob(jobId: string): Promise<void> {
+    await rm(this.job(jobId), { recursive: true, force: true });
+  }
+}
