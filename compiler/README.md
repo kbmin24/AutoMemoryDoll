@@ -29,10 +29,20 @@ Mount an empty, writable directory at `/output`. On success it contains `<UUID>.
 
 ## Launch
 
-Prepare absolute host paths and make the output directory writable by image user `65532:65532`. For example, a rootful Docker host can use `chown 65532:65532 "$output_dir"`.
+Prepare absolute host paths. The image runs as UID/GID `65532:65532`, so that user must be able to write to the host directory mounted at `/output`. On a rootful Docker host, set up a fresh output directory with:
 
 ```sh
-docker run --rm \
+mkdir -p "$output_dir"
+sudo chown 65532:65532 "$output_dir"
+sudo chmod 700 "$output_dir"
+```
+
+Keep the output bind mount read-write (do not add `readonly`). If the compiler reports `cannot write result.json: output I/O error: Permission denied (os error 13)`, check the ownership and permissions of the **host** output directory. For a quick local test, `chmod 777 "$output_dir"` also allows writing, but the UID-owned directory above is preferable.
+
+If you run the Docker CLI inside another container using the host's Docker socket, bind-mount source paths are resolved by the **host Docker daemon**. Put the input and output directories on the host and make them visible to the CLI container, ideally at the same absolute paths. A directory created only inside the CLI container (for example with `mktemp -d`) cannot be mounted into the sibling compiler container by the host daemon. Set the output directory permissions on the host.
+
+```sh
+docker run --rm --runtime=runsc\
   --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges \
   --mount "type=bind,source=$input_dir,target=/input,readonly" \
@@ -41,7 +51,7 @@ docker run --rm \
   automemorydoll-compiler:local
 ```
 
-The image runs as a non-root user. `/input` and the bundled TeX files are read-only at runtime; `/output` and the private `/tmp` mount are its writable locations. The future host-side launcher must select gVisor with `--runtime=runsc` and keep these mount and network restrictions. The image cannot select its own OCI runtime. Tectonic is configured with `SecurityStance::DisableInsecures` and shell escape disabled; filesystem isolation still depends on the container and gVisor boundaries.
+The image runs as a non-root user. `/input` and the bundled TeX files are read-only at runtime; `/output` and the private `/tmp` mount are its writable locations. The image cannot select its own OCI runtime. Tectonic is configured with `SecurityStance::DisableInsecures` and shell escape disabled; filesystem isolation still depends on the container and gVisor boundaries.
 
 ## Smoke test
 

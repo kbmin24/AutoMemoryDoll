@@ -2,6 +2,8 @@
 
 ## Working agreement
 
+- Do not create Git commits, even when an implementation plan includes a commit step. Leave changes uncommitted for the project owner to review and commit.
+- Do not create Git branches unless the project owner explicitly instructs you to do so, even when a workflow or implementation plan suggests creating one.
 - Ask the project owner before making an unresolved **design choice** that changes product behavior, architecture, the data model, a public contract, or a security boundary. Present the options and wait for a decision. Make routine implementation choices yourself; record consequential ones in the plan or design record rather than asking a stream of tiny questions.
 - Do not turn an idea, research reference, or tentative architecture from `DESIGN.md` into a requirement. Keep decided facts separate from open questions.
 - Work in milestone order: build the compiler container first. The backend, queue consumer, frontend, and database come later.
