@@ -27,7 +27,14 @@ case "$mode" in
 esac
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+volumes=''
+cleanup() {
+  for volume in $volumes; do
+    docker volume rm "$volume" >/dev/null 2>&1 || true
+  done
+  rm -rf "$work"
+}
+trap 'cleanup' EXIT HUP INT TERM
 
 run_job() {
   case_name=$1
@@ -42,18 +49,37 @@ run_job() {
       TECTONIC_SCRATCH_DIR="$case_dir/scratch" \
       "$COMPILER_BIN" "$case_dir/input" "$case_dir/output"
   else
+    input_volume=$(docker volume create)
+    volumes="$volumes $input_volume"
+    output_volume=$(docker volume create)
+    volumes="$volumes $output_volume"
+    tar -C "$case_dir/input" -cf - . | docker run --rm -i \
+      --network none --user 0:0 --entrypoint tar \
+      --mount "type=volume,source=$input_volume,target=/input" \
+      "$image" -C /input -xf -
+    docker run --rm --network none --user 0:0 --entrypoint chmod \
+      --mount "type=volume,source=$output_volume,target=/output" \
+      "$image" 777 /output
     if [ -n "${CONTAINER_RUNTIME:-}" ]; then
       set -- --runtime "$CONTAINER_RUNTIME"
     else
       set --
     fi
-    docker run --rm "$@" \
+    if docker run --rm "$@" \
       --network none --read-only --cap-drop ALL \
       --security-opt no-new-privileges \
-      --mount "type=bind,source=$case_dir/input,target=/input,readonly" \
-      --mount "type=bind,source=$case_dir/output,target=/output" \
+      --mount "type=volume,source=$input_volume,target=/input,readonly" \
+      --mount "type=volume,source=$output_volume,target=/output" \
       --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
-      "$image"
+      "$image"; then
+      job_status=0
+    else
+      job_status=$?
+    fi
+    docker run --rm --network none --user 0:0 --entrypoint tar \
+      --mount "type=volume,source=$output_volume,target=/output,readonly" \
+      "$image" -C /output -cf - . | tar -C "$case_dir/output" -xf -
+    return "$job_status"
   fi
 }
 

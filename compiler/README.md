@@ -61,6 +61,6 @@ With Docker and `jq` installed, run:
 sh compiler/tests/container-smoke.sh
 ```
 
-This builds the image, runs a successful job with escaped data, `|safe`, a local class and a relative resource, then checks PDF bytes and the result manifest. It also checks non-object JSON and invalid TeX failures. Every run uses `--network none`, a read-only root and input mount, and writable output and private temp mounts. To repeat under gVisor, set `CONTAINER_RUNTIME=runsc`.
+This builds the image, runs a successful job with escaped data, `|safe`, a local class and a relative resource, then checks PDF bytes and the result manifest. It also checks non-object JSON and invalid TeX failures. The script transfers fixtures and results through temporary Docker volumes, so it works when the Docker daemon cannot see the CLI's temporary directory. Each compiler run uses `--network none`, a read-only root and input mount, and writable output and private temp mounts. To repeat under gVisor, set `CONTAINER_RUNTIME=runsc`.
 
 For a local compiler check without Docker, set `SMOKE_MODE=local`, `COMPILER_BIN` to the built executable, and `TECTONIC_TEST_BUNDLE` to a directory containing the extracted full bundle. This checks the job flow but does not verify container isolation.
