@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String          @id @default(uuid()) @db.Uuid
+  username     String          @unique
+  passwordHash String          @map("password_hash")
+  role         String          @default("user")
+  disabled     Boolean         @default(false)
+  tokenVersion Int             @default(0) @map("token_version")
+  templates    Template[]
+  jobs         GenerationJob[]
+
+  @@map("users")
+}
+
+model Template {
+  id        String          @id @default(uuid()) @db.Uuid
+  ownedBy   String          @map("owned_by") @db.Uuid
+  owner     User            @relation(fields: [ownedBy], references: [id])
+  name      String
+  manifest  Json            @db.JsonB
+  deletedAt DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  jobs      GenerationJob[]
+
+  @@index([ownedBy])
+  @@map("templates")
+}
+
+model GenerationJob {
+  id           String    @id @default(uuid()) @db.Uuid
+  templateId   String    @map("template_id") @db.Uuid
+  template     Template  @relation(fields: [templateId], references: [id])
+  userId       String    @map("user_id") @db.Uuid
+  user         User      @relation(fields: [userId], references: [id])
+  batchCount   Int       @default(1) @map("batch_count")
+  timestamp    DateTime  @default(now()) @db.Timestamptz(6)
+  status       String    @default("queued")
+  message      String
+  pdfFilename  String?   @map("pdf_filename")
+  startedAt    DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  @@index([userId, timestamp])
+  @@map("generation_jobs")
+}
