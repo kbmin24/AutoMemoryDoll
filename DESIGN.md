@@ -84,6 +84,7 @@ The owner approved the [MVP application design](docs/superpowers/specs/2026-10-2
 - The frontend uses Vue.js and polls for generation status.
 - The backend API uses Express on Node.js with TypeScript.
 - The backend enqueues generation jobs in Redis using BullMQ. A separate Node.js/TypeScript queue consumer service, housed under `backend/`, consumes jobs and eventually launches compiler containers. The consumer is not part of the first compiler-container milestone.
+- The owner selected Prisma ORM for PostgreSQL access and migrations on 2026-11-01. The implementation plan pins the supported Prisma 7 line for this MVP.
 - The backend dispatches concrete JSON. Data binding is deferred beyond the MVP.
 - Generated PDFs and job history are retained. PDF files live on the backend filesystem in a fixed directory named by job ID.
 - Use an abstract storage class with a default filesystem implementation, and an abstract PDF generator class with a compiler-backed implementation.

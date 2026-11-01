@@ -2,6 +2,8 @@
 
 Approved by the project owner on 2026-10-25. This design covers the backend, queue consumer, and frontend after the single-job compiler container. `DESIGN.md` remains the concise decision record.
 
+Subsequent owner decision (2026-11-01): use Prisma ORM for PostgreSQL access and migrations. This changes the implementation tooling, not the application behavior or data model described below.
+
 ## Intent and boundaries
 
 An administrator creates user accounts. A user signs in, creates or edits a private LaTeX template workspace, optionally describes the values that template needs, submits one set of values and job resources, follows the generation status, and downloads the PDF. The MVP should make that path reliable and understandable. It does not include data binding, datasets, batch generation, sharing, an LLM worker, or a collaborative editor.
