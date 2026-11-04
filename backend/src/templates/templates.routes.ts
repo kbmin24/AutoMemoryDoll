@@ -18,6 +18,8 @@ import {
   updateTemplate,
 } from './templates.service.js';
 import { workspaceRoutes } from './workspace.routes.js';
+import { generationRoutes } from '../jobs/jobs.routes.js';
+import type { QueuePublisher } from '../jobs/jobs.service.js';
 
 function userId(request: AuthRequest): string {
   return request.currentUser!.id;
@@ -27,6 +29,7 @@ export function templatesRoutes(
   db: Database,
   config: AuthConfig,
   storage: FileSystemStorage,
+  queue?: QueuePublisher,
 ) {
   const router = Router();
   router.use(requireUser(db, config));
@@ -112,5 +115,6 @@ export function templatesRoutes(
   );
 
   router.use('/:id/files', workspaceRoutes(db, config, storage));
+  if (queue) router.use('/:id/generations', generationRoutes(db, config, storage, queue));
   return router;
 }

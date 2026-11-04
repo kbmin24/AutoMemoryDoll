@@ -7,7 +7,7 @@ This image processes one mounted job, writes a PDF and `result.json`, then exits
 From the repository root:
 
 ```sh
-docker build -f compiler/Dockerfile -t automemorydoll-compiler:local compiler
+$ sudo docker build -f compiler/Dockerfile -t automemorydoll-compiler:local compiler
 ```
 
 The build downloads the official full Tectonic 2022 default bundle from `https://data1.fullyjustified.net/tlextras-2022.0r0.tar`, verifies SHA-256 `425685e124746c15ba9bb8e0596bdaad98fce886afa347fbcf9ec0e9acd7fe79`, and installs the entire extracted bundle at `/bundle`. Network access is needed to build the image; the running compiler uses the bundle offline. The bundle is about 2.7 GB compressed, so allow space for the archive, extracted files, and image layers.

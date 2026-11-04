@@ -19,6 +19,7 @@ export abstract class Storage {
   abstract move(templateId: string, from: string[], to: string[]): Promise<void>;
   abstract delete(templateId: string, segments: string[]): Promise<void>;
   abstract snapshot(templateId: string, jobId: string): Promise<string>;
+  abstract jobInputExists(jobId: string): Promise<boolean>;
   abstract stageResource(jobId: string, storedName: string, temporaryPath: string): Promise<void>;
   abstract savePdf(jobId: string, source: string, filename: string): Promise<string>;
   abstract openPdf(jobId: string, filename: string): Promise<Readable>;

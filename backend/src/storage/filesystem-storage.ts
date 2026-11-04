@@ -242,6 +242,18 @@ export class FileSystemStorage extends Storage {
     });
   }
 
+  async jobInputExists(jobId: string): Promise<boolean> {
+    try {
+      const input = join(this.job(jobId), 'input');
+      await this.ordinary(input, 'directory');
+      await this.ordinary(join(input, 'data.json'), 'file');
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
   async stageResource(jobId: string, storedName: string, temporaryPath: string): Promise<void> {
     await this.locked(`resource:${jobId}`, async () => {
       await this.stagedFile(temporaryPath);
