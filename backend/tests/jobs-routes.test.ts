@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -156,4 +156,28 @@ describe('generation routes', () => {
     expect(await readdir(join(root, 'upload-staging'))).toEqual([]);
     expect(jobs).toHaveLength(0);
   });
+});
+
+it('streams only a successful owned PDF, including after template deletion', async () => {
+  const jobId = randomUUID();
+  const filename = `${randomUUID()}.pdf`;
+  jobs.push({
+    id: jobId,
+    userId: ownerId,
+    status: 'ok',
+    pdfFilename: filename,
+  });
+  await mkdir(join(root, 'pdfs', jobId), { recursive: true });
+  await writeFile(join(root, 'pdfs', jobId, filename), '%PDF-1.7\nexample');
+  const own = await request(app).get(`/api/jobs/${jobId}/pdf`);
+  expect(own.status).toBe(200);
+  expect(own.headers['content-type']).toContain('application/pdf');
+  expect(own.headers['content-disposition']).toContain('attachment');
+  expect(own.body.toString()).toContain('%PDF-');
+  const foreign = await request(app).get(`/api/jobs/${jobId}/pdf`).set('X-Test-User', otherId);
+  const missing = await request(app).get(`/api/jobs/${randomUUID()}/pdf`);
+  expect(foreign.status).toBe(404);
+  expect(foreign.body).toEqual(missing.body);
+  jobs[0].status = 'failed';
+  expect((await request(app).get(`/api/jobs/${jobId}/pdf`)).status).toBe(404);
 });

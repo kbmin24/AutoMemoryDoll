@@ -1,10 +1,16 @@
 {
   "name": "automemorydoll",
   "private": true,
-  "workspaces": ["backend", "frontend"],
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
     "test": "npm --workspace backend test",
-    "typecheck": "npm --workspace backend run typecheck"
+    "typecheck": "npm --workspace backend run typecheck",
+    "worker": "npm --workspace backend run worker"
   },
-  "engines": { "node": ">=24" }
+  "engines": {
+    "node": ">=24"
+  }
 }

@@ -1,3 +1,4 @@
+import { pipeline } from 'node:stream/promises';
 import { rm } from 'node:fs/promises';
 import { Router, type RequestHandler } from 'express';
 import { body, checkExact, param, validationResult } from 'express-validator';
@@ -112,7 +113,7 @@ export function generationRoutes(
   return router;
 }
 
-export function jobsRoutes(db: Database, config: AuthConfig) {
+export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystemStorage) {
   const router = Router();
   router.use(requireUser(db, config));
   router.get('/', checkExact(), validateRequest, async (request, response) => {
@@ -127,6 +128,22 @@ export function jobsRoutes(db: Database, config: AuthConfig) {
       response.json({
         job: await getJob(db, userId(request as AuthRequest), String(request.params.id)),
       });
+    },
+  );
+  router.get(
+    '/:id/pdf',
+    param('id').matches(ACCOUNT_ID_PATTERN),
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      const job = await getJob(db, userId(request as AuthRequest), String(request.params.id));
+      if (job.status !== 'ok' || !job.pdfFilename) throw new JobError('Job not found', 404);
+      const stream = await storage.openPdf(job.id, job.pdfFilename);
+      response.type('application/pdf');
+      response.attachment(job.pdfFilename);
+      response.set('Cache-Control', 'private, no-store');
+      response.set('X-Content-Type-Options', 'nosniff');
+      await pipeline(stream, response);
     },
   );
   return router;

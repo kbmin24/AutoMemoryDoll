@@ -1,0 +1,109 @@
+import { spawn } from 'node:child_process';
+import { basename, dirname, isAbsolute } from 'node:path';
+import { validateId } from '../storage/paths.js';
+import { PdfGenerator, type CompilerResult } from './pdf-generator.js';
+import type { CompilerConfig } from './config.js';
+
+export type DockerResult = { code: number | null; stderr: string };
+type ExecuteDocker = (args: string[], timeoutMs: number) => Promise<DockerResult>;
+
+export function runDocker(args: string[], timeoutMs: number): Promise<DockerResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    let timedOut = false;
+    child.stderr.on('data', (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      stderr = (stderr + chunk.toString()).slice(-64 * 1024);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) reject(new Error('Compiler container timed out'));
+      else resolve({ code, stderr });
+    });
+  });
+}
+
+function containerName(jobId: string): string {
+  return `amd-compiler-${validateId(jobId)}`;
+}
+
+export class ContainerPdfGenerator extends PdfGenerator {
+  constructor(
+    private readonly config: CompilerConfig,
+    private readonly execute: ExecuteDocker = runDocker,
+  ) {
+    super();
+  }
+
+  async generate(inputDir: string, outputDir: string): Promise<CompilerResult> {
+    if (
+      !isAbsolute(inputDir) ||
+      !isAbsolute(outputDir) ||
+      inputDir.includes(',') ||
+      outputDir.includes(',') ||
+      basename(inputDir) !== 'input' ||
+      basename(outputDir) !== 'output' ||
+      dirname(inputDir) !== dirname(outputDir)
+    ) {
+      throw new Error('Invalid compiler mount paths');
+    }
+    const jobId = validateId(basename(dirname(inputDir)));
+    let result: DockerResult;
+    try {
+      result = await this.execute(
+        [
+          'run',
+          '--rm',
+          `--name=${containerName(jobId)}`,
+          '--runtime=runsc',
+          '--network=none',
+          '--read-only',
+          '--cap-drop=ALL',
+          '--security-opt=no-new-privileges',
+          '--user=65532:65532',
+          `--cpus=${this.config.cpus}`,
+          `--memory=${this.config.memoryMb}m`,
+          `--memory-swap=${this.config.memoryMb}m`,
+          `--pids-limit=${this.config.pids}`,
+          '--mount',
+          `type=bind,source=${inputDir},target=/input,readonly`,
+          '--mount',
+          `type=bind,source=${outputDir},target=/output`,
+          '--tmpfs',
+          '/tmp:rw,nosuid,nodev,noexec,mode=1777',
+          this.config.image,
+        ],
+        this.config.wallTimeMs,
+      );
+    } finally {
+      // Killing the CLI alone does not guarantee the daemon stopped the container.
+      await this.stop(jobId);
+    }
+    const manifest = await this.readResult(outputDir);
+    if (result.code !== 0 && manifest.result === 'ok') {
+      throw new Error(`Compiler exited unsuccessfully: ${result.stderr}`);
+    }
+    if (manifest.result === 'failed') {
+      console.error(`Compiler diagnostics for ${jobId}`, result.stderr, manifest.message);
+    }
+    return manifest;
+  }
+
+  async stop(jobId: string): Promise<void> {
+    const result = await this.execute(['rm', '--force', containerName(jobId)], 10_000);
+    if (result.code !== 0 && !result.stderr.includes('No such container')) {
+      throw new Error(`Could not remove compiler container: ${result.stderr}`);
+    }
+  }
+}

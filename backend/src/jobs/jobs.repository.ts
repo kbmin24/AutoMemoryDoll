@@ -40,3 +40,40 @@ export function failQueuedJob(db: Database, jobId: string, message: string) {
     data: { status: 'failed', message, completedAt: new Date() },
   });
 }
+
+export function claimJob(db: Database, jobId: string, startedAt: Date) {
+  return db.generationJob.updateMany({
+    where: { id: jobId, status: 'queued' },
+    data: { status: 'generating', message: 'Generating PDF', startedAt },
+  });
+}
+
+export function finishJob(
+  db: Database,
+  jobId: string,
+  startedAt: Date,
+  result: {
+    status: 'ok' | 'failed';
+    message: string;
+    pdfFilename: string | null;
+  },
+) {
+  return db.generationJob.updateMany({
+    where: { id: jobId, status: 'generating', startedAt },
+    data: { ...result, completedAt: new Date() },
+  });
+}
+
+export function listStaleJobs(db: Database, before: Date) {
+  return db.generationJob.findMany({
+    where: { status: 'generating', startedAt: { lt: before } },
+    select: { id: true, startedAt: true },
+  });
+}
+
+export function listTerminalJobs(db: Database) {
+  return db.generationJob.findMany({
+    where: { status: { in: ['ok', 'failed'] } },
+    select: { id: true, status: true },
+  });
+}

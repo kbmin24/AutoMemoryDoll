@@ -23,11 +23,23 @@ beforeEach(async () => {
   await storage.createTemplateRoot(id);
 });
 
-afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
 
 describe('rooted storage', () => {
   it('rejects unsafe names', () => {
-    for (const name of ['.', '..', '.hidden', 'bad/', 'bad\\name', 'bad.', 'bad ', 'é', 'x'.repeat(129)]) {
+    for (const name of [
+      '.',
+      '..',
+      '.hidden',
+      'bad/',
+      'bad\\name',
+      'bad.',
+      'bad ',
+      'é',
+      'x'.repeat(129),
+    ]) {
       expect(() => validateSegments([name])).toThrow();
     }
     expect(() => validateSegments(Array(10).fill('dir'))).toThrow();
@@ -40,9 +52,14 @@ describe('rooted storage', () => {
     expect(await storage.readText(id, ['assets', 'a.txt'])).toBe('world');
     await storage.move(id, ['assets', 'a.txt'], ['assets', 'b.txt']);
     const chunks: Buffer[] = [];
-    for await (const chunk of await storage.openDownload(id, ['assets', 'b.txt'])) chunks.push(Buffer.from(chunk));
+    for await (const chunk of await storage.openDownload(id, ['assets', 'b.txt']))
+      chunks.push(Buffer.from(chunk));
     expect(Buffer.concat(chunks).toString()).toBe('world');
-    expect(await storage.listTemplateTree(id)).toContainEqual({ name: 'b.txt', kind: 'file', segments: ['assets', 'b.txt'] });
+    expect(await storage.listTemplateTree(id)).toContainEqual({
+      name: 'b.txt',
+      kind: 'file',
+      segments: ['assets', 'b.txt'],
+    });
     await storage.delete(id, ['assets', 'b.txt']);
     await expect(storage.readText(id, ['assets', 'b.txt'])).rejects.toThrow();
     await expect(storage.delete(id, ['template.tex'])).rejects.toThrow();
@@ -53,12 +70,18 @@ describe('rooted storage', () => {
     await expect(storage.openDownload(id, ['link'])).rejects.toThrow();
     await expect(storage.listTemplateTree(id)).rejects.toThrow();
     await rm(join(root, 'templates', id, 'link'));
-    await expect(storage.writeText(id, ['template.tex'], 'x'.repeat(1024 * 1024 + 1))).rejects.toThrow();
+    await expect(
+      storage.writeText(id, ['template.tex'], 'x'.repeat(1024 * 1024 + 1)),
+    ).rejects.toThrow();
   });
 
   it('enforces upload size and preserves the destination on failure', async () => {
-    await expect(storage.moveUpload(id, ['large.bin'], await staged(Buffer.alloc(20 * 1024 * 1024 + 1)))).rejects.toThrow();
-    expect(await storage.listTemplateTree(id)).not.toContainEqual(expect.objectContaining({ name: 'large.bin' }));
+    await expect(
+      storage.moveUpload(id, ['large.bin'], await staged(Buffer.alloc(20 * 1024 * 1024 + 1))),
+    ).rejects.toThrow();
+    expect(await storage.listTemplateTree(id)).not.toContainEqual(
+      expect.objectContaining({ name: 'large.bin' }),
+    );
   });
 
   it('serializes concurrent edits and snapshots', async () => {
@@ -77,7 +100,9 @@ describe('rooted storage', () => {
       storage.move(id, ['original.txt'], ['two.txt']),
     ]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect((await storage.listTemplateTree(id)).filter((entry) => entry.kind === 'file')).toHaveLength(1);
+    expect(
+      (await storage.listTemplateTree(id)).filter((entry) => entry.kind === 'file'),
+    ).toHaveLength(1);
   });
 
   it('keeps retained PDFs after job cleanup', async () => {
@@ -102,4 +127,18 @@ describe('rooted storage', () => {
     await storage.stageResource(job, 'image.png', await staged('abc'));
     expect(await readFile(join(input, 'resources', 'image.png'), 'utf8')).toBe('abc');
   });
+});
+
+it('uses private job/PDF directories and atomically moves the published PDF', async () => {
+  const { stat } = await import('node:fs/promises');
+  await storage.snapshot(id, job);
+  const { output } = await storage.prepareJobOutput(job);
+  const filename = `${randomUUID()}.pdf`;
+  const source = join(output, filename);
+  await writeFile(source, '%PDF-1.7');
+  const destination = await storage.savePdf(job, source, filename);
+  await expect(stat(source)).rejects.toThrow();
+  expect((await stat(join(root, 'jobs', job))).mode & 0o777).toBe(0o700);
+  expect((await stat(join(root, 'pdfs', job))).mode & 0o777).toBe(0o700);
+  expect(await readFile(destination, 'utf8')).toBe('%PDF-1.7');
 });

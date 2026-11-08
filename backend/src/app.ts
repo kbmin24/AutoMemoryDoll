@@ -24,14 +24,15 @@ export function createApp(
   app.use('/api/admin', adminRoutes(db, config));
   app.use('/api/owner', ownerRoutes(db, config));
   app.use('/api/templates', templatesRoutes(db, config, storage, queue));
-  if (queue) app.use('/api/jobs', jobsRoutes(db, config));
+  if (queue) app.use('/api/jobs', jobsRoutes(db, config, storage));
   app.use(
     (
       error: unknown,
       _request: express.Request,
       response: express.Response,
-      _next: express.NextFunction,
+      next: express.NextFunction,
     ) => {
+      if (response.headersSent) return next(error);
       if (error instanceof AccountError)
         return response.status(error.status).json({ error: error.message });
       if (error instanceof TemplateError)
