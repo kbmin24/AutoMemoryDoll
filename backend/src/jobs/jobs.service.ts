@@ -1,3 +1,4 @@
+import { JobError } from './jobs.errors.js';
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -15,6 +16,8 @@ import {
 } from './jobs.repository.js';
 import { findResourceAliases, rewriteResourceTokens } from './resource-tokens.js';
 
+export { JobError } from './jobs.errors.js';
+
 const aliasPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 export interface QueuePublisher {
@@ -25,15 +28,6 @@ export interface ResourceUpload {
   alias: string;
   temporaryPath: string;
   originalName?: string;
-}
-
-export class JobError extends Error {
-  constructor(
-    message: string,
-    public status = 400,
-  ) {
-    super(message);
-  }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -188,9 +182,6 @@ export async function submitGeneration(
   } catch (error) {
     if (!preserveSnapshot) {
       await storage.cleanupJob(jobId).catch(() => undefined);
-    }
-    if (error instanceof Error && error.message === 'Invalid resource alias') {
-      throw new JobError('Invalid resource alias');
     }
     throw error;
   }

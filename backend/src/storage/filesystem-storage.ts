@@ -1,3 +1,4 @@
+import { StorageError } from './storage.errors.js';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
@@ -71,7 +72,7 @@ export class FileSystemStorage extends Storage {
     else {
       try {
         await lstat(path);
-        throw new Error('Path already exists');
+        throw new StorageError('Path already exists', 'ALREADY_EXISTS');
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
@@ -155,10 +156,10 @@ export class FileSystemStorage extends Storage {
       try {
         const info = await file.stat();
         if (!info.isFile() || info.nlink !== 1 || info.size > TEXT_LIMIT)
-          throw new Error('Not an editable text file');
+          throw new StorageError('Not an editable text file');
         const bytes = await file.readFile();
         const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        if (text.includes('\0')) throw new Error('Not an editable text file');
+        if (text.includes('\0')) throw new StorageError('Not an editable text file');
         return text;
       } finally {
         await file.close();
@@ -168,11 +169,11 @@ export class FileSystemStorage extends Storage {
 
   async writeText(id: string, segments: string[], text: string): Promise<void> {
     if (typeof text !== 'string' || Buffer.byteLength(text) > TEXT_LIMIT)
-      throw new Error('Text size limit exceeded');
+      throw new StorageError('Text size limit exceeded');
     await this.locked(id, async () => {
       const names = validateSegments(segments);
       const path = await this.target(id, names, false).catch(async (error) => {
-        if ((error as Error).message !== 'Path already exists') throw error;
+        if (!(error instanceof StorageError) || error.code !== 'ALREADY_EXISTS') throw error;
         const existing = await this.target(id, names, true);
         await this.ordinary(existing, 'file');
         return existing;
@@ -184,7 +185,7 @@ export class FileSystemStorage extends Storage {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       if ((await this.workspaceBytes(id)) - oldSize + Buffer.byteLength(text) > WORKSPACE_LIMIT)
-        throw new Error('Workspace size limit exceeded');
+        throw new StorageError('Workspace size limit exceeded');
       const temp = join(this.template(id), `.write-${randomUUID()}`);
       try {
         const file = await open(
@@ -212,7 +213,8 @@ export class FileSystemStorage extends Storage {
         const path = await this.target(id, segments, false);
         const remaining = WORKSPACE_LIMIT - (await this.workspaceBytes(id));
         const size = await this.stagedFile(temporaryPath);
-        if (size > FILE_LIMIT || size > remaining) throw new Error('File size limit exceeded');
+        if (size > FILE_LIMIT || size > remaining)
+          throw new StorageError('File size limit exceeded');
         await this.target(id, segments, false);
         await rename(temporaryPath, path);
       } finally {
@@ -238,11 +240,11 @@ export class FileSystemStorage extends Storage {
   async move(id: string, from: string[], to: string[]): Promise<void> {
     await this.locked(id, async () => {
       if (from.length === 1 && from[0] === 'template.tex')
-        throw new Error('Cannot move template.tex');
+        throw new StorageError('Cannot move template.tex');
       const source = await this.target(id, from, true);
       const destination = await this.target(id, to, false);
       if (destination.startsWith(source + sep))
-        throw new Error('Cannot move directory into itself');
+        throw new StorageError('Cannot move directory into itself');
       await rename(source, destination);
     });
   }
@@ -250,7 +252,7 @@ export class FileSystemStorage extends Storage {
   async delete(id: string, segments: string[]): Promise<void> {
     await this.locked(id, async () => {
       if (segments.length === 1 && segments[0] === 'template.tex')
-        throw new Error('Cannot delete template.tex');
+        throw new StorageError('Cannot delete template.tex');
       const path = await this.target(id, segments, true);
       const info = await lstat(path);
       if (info.isDirectory()) {
@@ -320,11 +322,11 @@ export class FileSystemStorage extends Storage {
         }
         const size = await this.stagedFile(temporaryPath);
         if (size > FILE_LIMIT || size > WORKSPACE_LIMIT - total)
-          throw new Error('File size limit exceeded');
+          throw new StorageError('File size limit exceeded');
         const destination = join(dir, storedName);
         try {
           await lstat(destination);
-          throw new Error('Path already exists');
+          throw new StorageError('Path already exists', 'ALREADY_EXISTS');
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }

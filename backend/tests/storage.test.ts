@@ -1,8 +1,9 @@
+import { StorageError } from '../src/storage/storage.errors.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileSystemStorage } from '../src/storage/filesystem-storage.js';
 import { validateSegments } from '../src/storage/paths.js';
 
@@ -141,4 +142,21 @@ it('uses private job/PDF directories and atomically moves the published PDF', as
   expect((await stat(join(root, 'jobs', job))).mode & 0o777).toBe(0o700);
   expect((await stat(join(root, 'pdfs', job))).mode & 0o777).toBe(0o700);
   expect(await readFile(destination, 'utf8')).toBe('%PDF-1.7');
+});
+
+it('uses the collision code even when the diagnostic wording changes', async () => {
+  await storage.writeText(id, ['template.tex'], 'before');
+  const target = vi.spyOn(storage as any, 'target');
+  try {
+    target.mockRejectedValueOnce(new StorageError('Different diagnostic', 'ALREADY_EXISTS'));
+    await storage.writeText(id, ['template.tex'], 'after');
+    expect(await storage.readText(id, ['template.tex'])).toBe('after');
+
+    const internal = new Error('Path already exists');
+    target.mockRejectedValueOnce(internal);
+    await expect(storage.writeText(id, ['template.tex'], 'unexpected')).rejects.toBe(internal);
+    expect(await storage.readText(id, ['template.tex'])).toBe('after');
+  } finally {
+    target.mockRestore();
+  }
 });

@@ -1,3 +1,4 @@
+import { TemplateError } from './templates.errors.js';
 import type { ManifestV1, ShapeField } from '../contracts.js';
 
 const variablePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -9,18 +10,13 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function keysAre(value: Record<string, unknown>, names: string[]): boolean {
   return (
-    Object.keys(value).length === names.length &&
-    names.every((name) => Object.hasOwn(value, name))
+    Object.keys(value).length === names.length && names.every((name) => Object.hasOwn(value, name))
   );
 }
 
 export function validateManifest(input: unknown): ManifestV1 {
-  if (
-    !record(input) ||
-    !keysAre(input, ['version', 'shape']) ||
-    input.version !== 1
-  ) {
-    throw new Error('Invalid template manifest');
+  if (!record(input) || !keysAre(input, ['version', 'shape']) || input.version !== 1) {
+    throw new TemplateError('Invalid template manifest', 400, 'Invalid workspace operation');
   }
   if (input.shape === null) return { version: 1, shape: null };
   if (
@@ -29,7 +25,7 @@ export function validateManifest(input: unknown): ManifestV1 {
     !Array.isArray(input.shape.fields) ||
     input.shape.fields.length === 0
   ) {
-    throw new Error('Invalid template shape');
+    throw new TemplateError('Invalid template shape', 400, 'Invalid workspace operation');
   }
 
   const seen = new Set<string>();
@@ -46,7 +42,7 @@ export function validateManifest(input: unknown): ManifestV1 {
       typeof value.optional !== 'boolean' ||
       seen.has(value.variable)
     ) {
-      throw new Error('Invalid template shape field');
+      throw new TemplateError('Invalid template shape field', 400, 'Invalid workspace operation');
     }
     seen.add(value.variable);
     return {

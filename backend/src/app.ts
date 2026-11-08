@@ -6,10 +6,12 @@ import { AccountError } from './users/users.service.js';
 import type { AuthConfig } from './auth/auth.service.js';
 import { FileSystemStorage } from './storage/filesystem-storage.js';
 import { templatesRoutes } from './templates/templates.routes.js';
-import { TemplateError } from './templates/templates.service.js';
+import { TemplateError } from './templates/templates.errors.js';
+import { StorageError } from './storage/storage.errors.js';
 import multer from 'multer';
 import { jobsRoutes } from './jobs/jobs.routes.js';
-import { JobError, type QueuePublisher } from './jobs/jobs.service.js';
+import { JobError } from './jobs/jobs.errors.js';
+import type { QueuePublisher } from './jobs/jobs.service.js';
 
 export function createApp(
   db: PrismaClient,
@@ -36,21 +38,14 @@ export function createApp(
       if (error instanceof AccountError)
         return response.status(error.status).json({ error: error.message });
       if (error instanceof TemplateError)
-        return response.status(error.status).json({ error: error.message });
+        return response.status(error.status).json({ error: error.publicMessage });
       if (error instanceof JobError)
         return response.status(error.status).json({ error: error.message });
       if (error instanceof multer.MulterError)
         return response.status(400).json({ error: 'Invalid upload' });
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
         return response.status(404).json({ error: 'File not found' });
-      if (
-        error instanceof Error &&
-        (error.message.startsWith('Invalid ') ||
-          error.message.startsWith('Cannot ') ||
-          error.message.includes('limit') ||
-          error.message.includes('Path already exists') ||
-          error.message.includes('editable text'))
-      )
+      if (error instanceof StorageError)
         return response.status(400).json({ error: 'Invalid workspace operation' });
       console.error(error);
       return response.status(500).json({ error: 'Internal server error' });

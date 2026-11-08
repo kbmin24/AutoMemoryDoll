@@ -1,3 +1,4 @@
+import { TemplateError } from './templates.errors.js';
 import { randomUUID } from 'node:crypto';
 import type { ManifestV1 } from '../contracts.js';
 import type { Database } from '../users/users.repository.js';
@@ -11,14 +12,7 @@ import {
   updateOwnedTemplate,
 } from './templates.repository.js';
 
-export class TemplateError extends Error {
-  constructor(
-    message: string,
-    public status = 400,
-  ) {
-    super(message);
-  }
-}
+export { TemplateError } from './templates.errors.js';
 
 function validName(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) {
@@ -27,11 +21,7 @@ function validName(value: unknown): string {
   return value.trim();
 }
 
-export function templateDto(template: {
-  id: string;
-  name: string;
-  manifest: unknown;
-}) {
+export function templateDto(template: { id: string; name: string; manifest: unknown }) {
   return {
     id: template.id,
     name: template.name,
@@ -43,11 +33,7 @@ export async function listTemplates(db: Database, userId: string) {
   return (await listOwnedTemplates(db, userId)).map(templateDto);
 }
 
-export async function getTemplate(
-  db: Database,
-  userId: string,
-  templateId: string,
-) {
+export async function getTemplate(db: Database, userId: string, templateId: string) {
   try {
     validateId(templateId);
   } catch {
@@ -67,13 +53,7 @@ export async function createTemplate(
 ) {
   const id = randomUUID();
   const validManifest = validateManifest(manifest);
-  const template = await insertTemplate(
-    db,
-    id,
-    userId,
-    validName(name),
-    validManifest,
-  );
+  const template = await insertTemplate(db, id, userId, validName(name), validManifest);
   try {
     await storage.createTemplateRoot(id);
     await storage.writeText(id, ['template.tex'], '');
@@ -94,10 +74,8 @@ export async function updateTemplate(
   await getTemplate(db, userId, templateId);
   const changes: { name?: string; manifest?: ManifestV1 } = {};
   if (patch.name !== undefined) changes.name = validName(patch.name);
-  if (patch.manifest !== undefined)
-    changes.manifest = validateManifest(patch.manifest);
-  if (!Object.keys(changes).length)
-    throw new TemplateError('Empty template update');
+  if (patch.manifest !== undefined) changes.manifest = validateManifest(patch.manifest);
+  if (!Object.keys(changes).length) throw new TemplateError('Empty template update');
   const updated = await updateOwnedTemplate(db, userId, templateId, changes);
   if (!updated.count) throw new TemplateError('Template not found', 404);
   return templateDto(await getTemplate(db, userId, templateId));

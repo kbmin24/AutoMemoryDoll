@@ -1,23 +1,32 @@
+import { StorageError } from './storage.errors.js';
 import { isAbsolute } from 'node:path';
 
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/;
 
 export function validateSegments(segments: string[]): string[] {
   if (!Array.isArray(segments) || segments.length < 1 || segments.length > 9) {
-    throw new Error('Invalid path depth');
+    throw new StorageError('Invalid path depth');
   }
 
   let length = 0;
   for (const segment of segments) {
-    if (typeof segment !== 'string' || segment.length > 128 ||
-        segment === '.' || segment === '..' || !namePattern.test(segment) ||
-        segment.endsWith('.') || segment.endsWith(' ') ||
-        segment.includes('/') || segment.includes('\\') || isAbsolute(segment)) {
-      throw new Error('Invalid path segment');
+    if (
+      typeof segment !== 'string' ||
+      segment.length > 128 ||
+      segment === '.' ||
+      segment === '..' ||
+      !namePattern.test(segment) ||
+      segment.endsWith('.') ||
+      segment.endsWith(' ') ||
+      segment.includes('/') ||
+      segment.includes('\\') ||
+      isAbsolute(segment)
+    ) {
+      throw new StorageError('Invalid path segment');
     }
     length += Buffer.byteLength(segment) + 1;
   }
-  if (length - 1 > 512) throw new Error('Path too long');
+  if (length - 1 > 512) throw new StorageError('Path too long');
   return [...segments];
 }
 

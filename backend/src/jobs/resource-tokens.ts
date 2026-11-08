@@ -1,3 +1,5 @@
+import { JobError } from './jobs.errors.js';
+
 const tokenPattern = /@resource\(([^)]*)\)/g;
 const aliasPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -6,7 +8,7 @@ export function findResourceAliases(textFiles: string[]): string[] {
   for (const text of textFiles) {
     for (const match of text.matchAll(tokenPattern)) {
       if (!aliasPattern.test(match[1])) {
-        throw new Error('Invalid resource alias');
+        throw new JobError('Invalid resource alias');
       }
       aliases.add(match[1]);
     }
@@ -20,7 +22,7 @@ export function rewriteResourceTokens(
 ): string {
   return text.replace(tokenPattern, (_token, alias: string) => {
     if (!aliasPattern.test(alias) || !Object.hasOwn(aliasToInternalPath, alias)) {
-      throw new Error('Invalid resource alias');
+      throw new JobError('Invalid resource alias');
     }
     return aliasToInternalPath[alias];
   });
