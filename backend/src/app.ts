@@ -1,4 +1,6 @@
 import express from 'express';
+import { requestLogging, logRequestError, failAction } from './logging/http.js';
+import { silentLogger, type Logger } from './logging/logger.js';
 import type { PrismaClient } from './generated/prisma/client.js';
 import { authRoutes } from './auth/auth.routes.js';
 import { adminRoutes, ownerRoutes } from './users/users.routes.js';
@@ -18,9 +20,13 @@ export function createApp(
   config: AuthConfig,
   storage = new FileSystemStorage(process.env.STORAGE_ROOT ?? './data'),
   queue?: QueuePublisher,
+  logger: Logger = silentLogger,
+  trustedProxies: string[] = [],
 ) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trustedProxies);
+  app.use(requestLogging(logger));
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/auth', authRoutes(db, config));
   app.use('/api/admin', adminRoutes(db, config));
@@ -34,21 +40,25 @@ export function createApp(
       response: express.Response,
       next: express.NextFunction,
     ) => {
-      if (response.headersSent) return next(error);
-      if (error instanceof AccountError)
-        return response.status(error.status).json({ error: error.message });
-      if (error instanceof TemplateError)
-        return response.status(error.status).json({ error: error.publicMessage });
-      if (error instanceof JobError)
-        return response.status(error.status).json({ error: error.message });
-      if (error instanceof multer.MulterError)
-        return response.status(400).json({ error: 'Invalid upload' });
+      const reply = (status: number, message: string) => {
+        failAction(response, status);
+        return response.status(status).json({ error: message });
+      };
+      if (response.headersSent) {
+        logRequestError(logger, response, error);
+        failAction(response, 500);
+        response.destroy();
+        return;
+      }
+      if (error instanceof AccountError) return reply(error.status, error.message);
+      if (error instanceof TemplateError) return reply(error.status, error.publicMessage);
+      if (error instanceof JobError) return reply(error.status, error.message);
+      if (error instanceof multer.MulterError) return reply(400, 'Invalid upload');
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
-        return response.status(404).json({ error: 'File not found' });
-      if (error instanceof StorageError)
-        return response.status(400).json({ error: 'Invalid workspace operation' });
-      console.error(error);
-      return response.status(500).json({ error: 'Internal server error' });
+        return reply(404, 'File not found');
+      if (error instanceof StorageError) return reply(400, 'Invalid workspace operation');
+      logRequestError(logger, response, error);
+      return reply(500, 'Internal server error');
     },
   );
   return app;

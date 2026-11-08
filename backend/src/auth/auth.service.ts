@@ -9,7 +9,11 @@ import {
 } from '../users/users.repository.js';
 import { AccountError, validatePassword } from '../users/users.service.js';
 
-export type AuthConfig = { jwtSecret: string; cookieHours: number };
+export type AuthConfig = {
+  jwtSecret: string;
+  cookieHours: number;
+  cookieSecure?: boolean;
+};
 export const cookieName = 'amd_session';
 
 const encoder = new TextEncoder();

@@ -2,6 +2,7 @@ export type Config = {
   databaseUrl: string;
   jwtSecret: string;
   cookieHours: number;
+  cookieSecure: boolean;
   port: number;
   redisUrl?: string;
 };
@@ -25,6 +26,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     redisUrl: env.REDIS_URL,
     jwtSecret: env.JWT_SECRET,
     cookieHours,
+    cookieSecure: env.NODE_ENV !== 'development',
     port,
   };
 }

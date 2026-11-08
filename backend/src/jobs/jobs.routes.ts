@@ -1,3 +1,9 @@
+import {
+  beginAction,
+  markActionSuccess,
+  logDownload,
+  requestLogger,
+} from '../logging/http.js';
 import { pipeline } from 'node:stream/promises';
 import { rm } from 'node:fs/promises';
 import { Router, type RequestHandler } from 'express';
@@ -87,6 +93,7 @@ export function generationRoutes(
     },
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       const files = stagedFiles(request as AuthRequest);
       try {
         const data = generationData(request as AuthRequest);
@@ -98,11 +105,21 @@ export function generationRoutes(
         if (!ACCOUNT_ID_PATTERN.test(String(request.params.id))) {
           throw new JobError('Template not found', 404);
         }
-        const job = await submitGeneration(db, storage, queue, {
-          userId: userId(request as AuthRequest),
+        const job = await submitGeneration(
+          db,
+          storage,
+          queue,
+          {
+            userId: userId(request as AuthRequest),
+            templateId: String(request.params.id),
+            data,
+            uploads,
+          },
+          requestLogger(response),
+        );
+        markActionSuccess(response, {
           templateId: String(request.params.id),
-          data,
-          uploads,
+          jobId: job.id,
         });
         response.status(201).json({ job });
       } finally {
@@ -117,6 +134,7 @@ export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystem
   const router = Router();
   router.use(requireUser(db, config));
   router.get('/', checkExact(), validateRequest, async (request, response) => {
+    beginAction(response);
     response.json({ jobs: await listJobs(db, userId(request as AuthRequest)) });
   });
   router.get(
@@ -125,6 +143,7 @@ export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystem
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       response.json({
         job: await getJob(db, userId(request as AuthRequest), String(request.params.id)),
       });
@@ -136,14 +155,22 @@ export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystem
     checkExact(),
     validateRequest,
     async (request, response) => {
-      const job = await getJob(db, userId(request as AuthRequest), String(request.params.id));
-      if (job.status !== 'ok' || !job.pdfFilename) throw new JobError('Job not found', 404);
+      beginAction(response);
+      const job = await getJob(
+        db,
+        userId(request as AuthRequest),
+        String(request.params.id),
+      );
+      if (job.status !== 'ok' || !job.pdfFilename)
+        throw new JobError('Job not found', 404);
       const stream = await storage.openPdf(job.id, job.pdfFilename);
       response.type('application/pdf');
       response.attachment(job.pdfFilename);
       response.set('Cache-Control', 'private, no-store');
       response.set('X-Content-Type-Options', 'nosniff');
-      await pipeline(stream, response);
+      await logDownload(response, () => pipeline(stream, response), {
+        jobId: job.id,
+      });
     },
   );
   return router;

@@ -1,10 +1,7 @@
+import { beginAction, markActionSuccess } from '../logging/http.js';
 import { Router } from 'express';
 import { body, checkExact, param } from 'express-validator';
-import {
-  requireCsrf,
-  requireUser,
-  type AuthRequest,
-} from '../auth/auth.middleware.js';
+import { requireCsrf, requireUser, type AuthRequest } from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
@@ -35,6 +32,7 @@ export function templatesRoutes(
   router.use(requireUser(db, config));
 
   router.get('/', checkExact(), validateRequest, async (request, response) => {
+    beginAction(response);
     response.json({ templates: await listTemplates(db, userId(request)) });
   });
 
@@ -48,6 +46,7 @@ export function templatesRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       const template = await createTemplate(
         db,
         storage,
@@ -55,25 +54,17 @@ export function templatesRoutes(
         request.body.name,
         request.body.manifest,
       );
+      markActionSuccess(response, { templateId: template.id });
       response.status(201).json({ template });
     },
   );
 
   const id = param('id').matches(ACCOUNT_ID_PATTERN);
-  router.get(
-    '/:id',
-    id,
-    checkExact(),
-    validateRequest,
-    async (request, response) => {
-      const template = await getTemplate(
-        db,
-        userId(request),
-        String(request.params.id),
-      );
-      response.json({ template: templateDto(template) });
-    },
-  );
+  router.get('/:id', id, checkExact(), validateRequest, async (request, response) => {
+    beginAction(response);
+    const template = await getTemplate(db, userId(request), String(request.params.id));
+    response.json({ template: templateDto(template) });
+  });
 
   router.patch(
     '/:id',
@@ -86,14 +77,15 @@ export function templatesRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
-      response.json({
-        template: await updateTemplate(
-          db,
-          userId(request),
-          String(request.params.id),
-          request.body,
-        ),
-      });
+      beginAction(response);
+      const template = await updateTemplate(
+        db,
+        userId(request),
+        String(request.params.id),
+        request.body,
+      );
+      markActionSuccess(response, { templateId: template.id });
+      response.json({ template });
     },
   );
 
@@ -104,12 +96,9 @@ export function templatesRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
-      await softDeleteTemplate(
-        db,
-        storage,
-        userId(request),
-        String(request.params.id),
-      );
+      beginAction(response);
+      await softDeleteTemplate(db, storage, userId(request), String(request.params.id));
+      markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },
   );

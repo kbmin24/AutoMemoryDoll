@@ -1,3 +1,4 @@
+import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import type { QueuePublisher } from './jobs.service.js';
@@ -19,13 +20,15 @@ export class BullMqPublisher implements QueuePublisher {
   }
 }
 
-export function createJobQueue(redisUrl: string) {
+export function createJobQueue(redisUrl: string, logger: Logger = silentLogger) {
   const connection = new Redis(redisUrl, {
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
     connectTimeout: 5_000,
   });
+  connection.on('error', (error) => logger.error('queue.error', safeError(error)));
   const queue = new Queue(queueName, { connection });
+  queue.on('error', (error) => logger.error('queue.error', safeError(error)));
   return {
     publisher: new BullMqPublisher(queue),
     async close() {

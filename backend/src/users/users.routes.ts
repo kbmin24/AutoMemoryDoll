@@ -1,3 +1,4 @@
+import { beginAction, markActionSuccess } from '../logging/http.js';
 import { Router } from 'express';
 import { body, checkExact, param } from 'express-validator';
 import type { Database } from './users.repository.js';
@@ -20,11 +21,8 @@ import {
 export function adminRoutes(db: Database, config: AuthConfig) {
   const router = Router();
   router.use(requireUser(db, config), requireAdmin());
-  router.get(
-    '/users',
-    checkExact(),
-    validateRequest,
-    async (_request, response) => response.json({ users: await listUsers(db) }),
+  router.get('/users', checkExact(), validateRequest, async (_request, response) =>
+    response.json({ users: await listUsers(db) }),
   );
   router.post(
     '/users',
@@ -34,11 +32,13 @@ export function adminRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       const user = await createRegularUser(
         db,
         request.body?.username,
         request.body?.password,
       );
+      markActionSuccess(response, { targetId: user.id });
       response.status(201).json({ user });
     },
   );
@@ -51,13 +51,14 @@ export function adminRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     async (request, response) => {
-      response.json({
-        user: await setDisabled(
-          db,
-          String(request.params.id),
-          request.body?.disabled,
-        ),
-      });
+      beginAction(response);
+      const user = await setDisabled(
+        db,
+        String(request.params.id),
+        request.body?.disabled,
+      );
+      markActionSuccess(response, { targetId: String(request.params.id) });
+      response.json({ user });
     },
   );
   return router;
@@ -75,9 +76,10 @@ export function ownerRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     async (request, response) => {
-      response.json({
-        user: await setRole(db, String(request.params.id), request.body?.role),
-      });
+      beginAction(response);
+      const user = await setRole(db, String(request.params.id), request.body?.role);
+      markActionSuccess(response, { targetId: String(request.params.id) });
+      response.json({ user });
     },
   );
   return router;

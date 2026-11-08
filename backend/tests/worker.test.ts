@@ -1,10 +1,22 @@
+import { captureLogs } from './helpers/logging.js';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { FileSystemStorage } from '../src/storage/filesystem-storage.js';
-import { JobProcessor, reconcileFailedDeliveries } from '../src/worker/jobs.worker.js';
+import {
+  JobProcessor,
+  reconcileFailedDeliveries,
+} from '../src/worker/jobs.worker.js';
 import { PdfGenerator } from '../src/worker/pdf-generator.js';
 
 let root: string;
@@ -26,6 +38,7 @@ class FakeGenerator extends PdfGenerator {
 }
 let generator: FakeGenerator;
 let processor: JobProcessor;
+let logs: ReturnType<typeof captureLogs>;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'amd-worker-'));
@@ -46,7 +59,8 @@ beforeEach(async () => {
         if (
           where.id !== job.id ||
           where.status !== job.status ||
-          (where.startedAt instanceof Date && +where.startedAt !== +job.startedAt)
+          (where.startedAt instanceof Date &&
+            +where.startedAt !== +job.startedAt)
         )
           return { count: 0 };
         Object.assign(job, data);
@@ -71,7 +85,8 @@ beforeEach(async () => {
     );
   };
   generator = new FakeGenerator();
-  processor = new JobProcessor(db, storage, generator, 1000, () => undefined);
+  logs = captureLogs();
+  processor = new JobProcessor(db, storage, generator, 1000, logs.logger);
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
@@ -84,7 +99,9 @@ it('publishes only the named PDF, keeps it after cleanup, and ignores repeated d
   expect(job.pdfFilename).toBe(filename);
   expect(calls).toBe(1);
   expect(await readdir(join(root, 'pdfs', jobId))).toEqual([filename]);
-  expect(await readFile(join(root, 'pdfs', jobId, filename), 'utf8')).toContain('%PDF-');
+  expect(await readFile(join(root, 'pdfs', jobId, filename), 'utf8')).toContain(
+    '%PDF-',
+  );
   expect(await storage.jobInputExists(jobId)).toBe(false);
 });
 
@@ -185,7 +202,8 @@ it('preserves a committed PDF when the completion acknowledgement is lost', asyn
   const update = db.generationJob.updateMany.getMockImplementation();
   db.generationJob.updateMany.mockImplementation(async (query: any) => {
     const result = await update(query);
-    if (query.data.status === 'ok') throw new Error('Connection lost after commit');
+    if (query.data.status === 'ok')
+      throw new Error('Connection lost after commit');
     return result;
   });
   await processor.processJob(jobId);
@@ -253,4 +271,45 @@ it('rejects success when the manifest-named PDF is missing', async () => {
   expect(job.status).toBe('failed');
   expect(job.pdfFilename).toBeNull();
   await expect(readdir(join(root, 'pdfs', jobId))).rejects.toThrow();
+});
+
+it('logs one correlated outcome without raw compiler messages or duplicate deliveries', async () => {
+  generate = async (_input, output) => {
+    await writeFile(
+      join(output, 'result.json'),
+      JSON.stringify({
+        result: 'failed',
+        filename: null,
+        message: 'SECRET TEX',
+      }),
+    );
+  };
+  await processor.processJob(jobId);
+  await processor.processJob(jobId);
+  expect(
+    logs.events.filter((event) => event.message === 'generation.started'),
+  ).toHaveLength(1);
+  expect(
+    logs.events.filter((event) => event.message === 'generation.rejected'),
+  ).toHaveLength(1);
+  expect(
+    logs.events.find((event) => event.message === 'generation.rejected'),
+  ).toMatchObject({ jobId, level: 'warn', outcome: 'rejected' });
+  expect(JSON.stringify(logs.events)).not.toContain('SECRET');
+});
+
+it('includes the original stack for unexpected generation failures', async () => {
+  generate = async () => {
+    throw new Error('SECRET connection string');
+  };
+  await processor.processJob(jobId);
+  expect(
+    logs.events.find((event) => event.message === 'generation.failed'),
+  ).toMatchObject({
+    jobId,
+    level: 'error',
+    errorCode: 'unexpected',
+    errorMessage: 'SECRET connection string',
+    stack: expect.stringContaining('Error: SECRET connection string'),
+  });
 });

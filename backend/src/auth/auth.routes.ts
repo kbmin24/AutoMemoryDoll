@@ -1,3 +1,4 @@
+import { beginAction, markActionSuccess } from '../logging/http.js';
 import { Router } from 'express';
 import { body, checkExact } from 'express-validator';
 import type { Database } from '../users/users.repository.js';
@@ -10,18 +11,14 @@ import {
   issueSession,
   type AuthConfig,
 } from './auth.service.js';
-import {
-  requireCsrf,
-  requireUser,
-  type AuthRequest,
-} from './auth.middleware.js';
+import { requireCsrf, requireUser, type AuthRequest } from './auth.middleware.js';
 import { USERNAME_PATTERN, validateRequest } from '../validation.js';
 
 export function authRoutes(db: Database, config: AuthConfig) {
   const router = Router();
   const cookieOptions = {
     httpOnly: true,
-    secure: true,
+    secure: config.cookieSecure ?? true,
     sameSite: 'strict' as const,
     path: '/',
   };
@@ -33,12 +30,10 @@ export function authRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     async (request, response) => {
-      const user = await authenticate(
-        db,
-        request.body?.username,
-        request.body?.password,
-      );
+      beginAction(response);
+      const user = await authenticate(db, request.body?.username, request.body?.password);
       const session = await issueSession(config, user);
+      markActionSuccess(response, { actorId: user.id });
       response.cookie(cookieName, session.token, {
         ...cookieOptions,
         maxAge: config.cookieHours * 3600_000,
@@ -68,6 +63,7 @@ export function authRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     (_request, response) => {
+      markActionSuccess(response);
       response.clearCookie(cookieName, cookieOptions);
       response.status(204).end();
     },
@@ -82,12 +78,14 @@ export function authRoutes(db: Database, config: AuthConfig) {
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       await changePassword(
         db,
         (request as AuthRequest).currentUser!.id,
         request.body?.currentPassword,
         request.body?.newPassword,
       );
+      markActionSuccess(response);
       response.clearCookie(cookieName, cookieOptions);
       response.status(200).json({ message: 'Password changed' });
     },

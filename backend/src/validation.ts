@@ -1,3 +1,4 @@
+import { failAction } from './logging/http.js';
 import type { RequestHandler } from 'express';
 import { validationResult } from 'express-validator';
 
@@ -7,6 +8,7 @@ export const ACCOUNT_ID_PATTERN =
 
 export const validateRequest: RequestHandler = (request, response, next) => {
   if (!validationResult(request).isEmpty()) {
+    failAction(response, 400);
     response.status(400).json({ error: 'Invalid request' });
     return;
   }
@@ -16,6 +18,7 @@ export const validateRequest: RequestHandler = (request, response, next) => {
 
 export const validateAccountId: RequestHandler = (request, response, next) => {
   if (!validationResult(request).isEmpty()) {
+    failAction(response, 404);
     response.status(404).json({ error: 'User not found' });
     return;
   }

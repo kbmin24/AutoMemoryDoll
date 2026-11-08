@@ -1,5 +1,24 @@
 # AutoMemoryDoll design record
 
+## Interface design language: decisions from 2026-11-08
+
+The owner approved the Noto Sans mockup and explicitly confirmed that this design is what they want. The reference is [the approved UI mockup](docs/design/approved-ui-mockup.html), preserved independently of the temporary preview server. Its layout, colors, spacing, and interface typography are the frontend design target. Prototype-only navigation, sample content, and simulated generation are not additional product requirements. Product behavior not settled in the interview remains open.
+
+- The interface should feel practical and straightforward. DokuWiki's simplicity and Google Drive are owner-provided references; DokuWiki's dated appearance is not a target.
+- Template authors may know LaTeX; document creators may have no LaTeX or technical knowledge.
+- Use a document-workspace character with subtle, restrained warmth, Noto Sans for interface typography, and charcoal gray as the accent color for primary actions.
+- Avoid excessive buttons and decorative elements. Use a compact top bar for navigation. Use the mockup's color values and visual treatment; navigation contents and actions beyond those explicitly agreed remain open.
+- Display the full name AutoMemoryDoll in the top bar.
+- Vertically center the logo in the top bar and link it to `/`.
+- Use the Font Awesome regular user icon (`fa-regular fa-user`) as the account popup button. Show the username first in the dropdown, followed by a bold divider, My Account, and Log out. These actions do not appear separately in the main navigation. This supersedes the earlier visible username button.
+- The starting screen shows recently used templates as cards with document previews.
+- Selecting a template opens its generation form immediately.
+- The generation workspace places the form beside a document preview, similar to Overleaf. The preview updates only when the user clicks Generate, rather than automatically as values change. Initial preview content and preview behavior after edits or failures remain open.
+- Template authors use the same split workspace, with the file browser and text editor replacing the generation form beside the preview. Use the mockup's proportions as the sizing reference.
+- The interface must be mobile friendly. Desktop side-by-side workspaces become tabbed interfaces on mobile. Successful document generation automatically switches to the preview tab on mobile. Breakpoints and behavior after a failed generation remain open.
+- Give screens a little more breathing room, with comfortable controls and clear separation between sections. Use the approved mockup's spacing as the reference.
+- Generation failures show a short explanation with expandable technical details. This presentation choice does not expand the backend's public error contract; the content available for those details remains to be determined.
+
 This document records decisions made with the project owner and identifies work that remains undecided. It is not an implementation plan. Do not infer approval of a technology or feature merely because it appears in the context section.
 
 ## Purpose and possible product scope
@@ -90,6 +109,7 @@ The owner approved the [MVP application design](docs/superpowers/specs/2026-10-2
 - Generated PDFs and job history are retained. PDF files live on the backend filesystem in a fixed directory named by job ID.
 - Use an abstract storage class with a default filesystem implementation, and an abstract PDF generator class with a compiler-backed implementation.
 - Authentication uses JWT in a short-lived HttpOnly, Secure, SameSite cookie with CSRF protection. There are `user`, `admin`, and `owner` roles. Accounts are created by an administrator through a web screen rather than through public self-signup. Administrators manage accounts but do not gain access to other users' templates, jobs, or PDFs. The sole owner can perform administrator actions and additionally grant or remove `admin` privileges from users; ownership does not change the privacy of other users' work. Each user's work is private to that user. The owner account is created by a one-time server setup command.
+- On 2026-11-08, the owner requested local HTTP authentication support after confirming the `Secure` cookie flag blocked their test requests. The API omits `Secure` only when explicitly started with `NODE_ENV=development`; all other environments, including an unset value, keep it enabled. HttpOnly, SameSite=Strict, and CSRF protection remain enabled.
 - Task 2 implements password hashing with Argon2id through the maintained `argon2` package, following the approved application's adaptive password-hashing requirement. This replaces the implementation plan's `crypto.scrypt` step without changing the account contract.
 - All user-controlled input must be validated at the boundary where it enters the system, before it is used in database queries, filesystem operations, or document generation. Express routes use `express-validator` field chains such as `body(...)` and `param(...)`, followed by `checkExact()` and a shared `validateRequest` middleware. These reject malformed and unexpected body, path, and query values without implicit type coercion. Authentication cookies and CSRF headers retain their dedicated checks; uploads, the owner setup command, and compiler job files require validation appropriate to their own input formats. New endpoints must add validation chains when implemented. Validation errors must not echo passwords or other sensitive input.
 - When adding a template, the user may define a data shape. This option is on by default, but the user can choose not to define one. Each shape field has a template variable name, a display name, an optional/required setting, and one of four types: `text`, `longtext`, `number`, or `boolean`. `longtext` is a string like `text`, but uses a textarea in the frontend. The app generates a form from a defined shape when generating a single PDF. Without a defined shape, the generation screen provides a box for the user to enter JSON.
@@ -160,6 +180,14 @@ Typst, Mustache, Carbone, ODT/DOCX templating, a custom templating engine, LaTTe
 
 ## Open decisions to resolve before relevant implementation
 
+### Logging decisions from 2026-11-08
+
+The owner selected a shared Winston interface for the API and queue consumer, including safe compiler diagnostics collected by the consumer. Log HTTP requests and explicit action events as well as diagnostic errors; all obey the configured level. Successful events use `info`, rejected events `warn`, unexpected failures `error`, and extra safe diagnostics `debug`. Output JSON to console and separate API/consumer local files, with daily rotation, a configurable 20 MB default file size, and configurable 180-day default retention. An optional configurable per-service disk cap deletes the oldest files when reached, even before the retention period; it is disabled by default. Return the server-generated request ID in an `X-Request-ID` response header. Continue operating if file logging fails and report that failure to stderr.
+
+Include actor/target IDs, request/job correlation, and client IP for HTTP/authentication events. Exclude bodies, document data/content, passwords, cookies, authorization headers, and filenames. Cover authentication/password actions, account/role management, template/workspace changes, generation submission/outcome, and downloads. Configure trusted proxy IPs/CIDRs with no proxy trusted by default; the deployment proxy is undecided among Caddy, Apache, Nginx, or another choice. See the [approved logging design](docs/superpowers/specs/2026-11-08-logging-design.md) for implementation recommendations. The owner approved the design; prepare the implementation plan before product changes.
+
+### Remaining project decisions
+
 - Product scope beyond this approved MVP.
 - Batch file layout and output naming; any compiler input/output behavior not specified above.
 - Later TeX sanitization, resource limits, and the remaining sandbox policy.
@@ -169,3 +197,7 @@ Typst, Mustache, Carbone, ODT/DOCX templating, a custom templating engine, LaTTe
 - Routine API route names, migration layout, package manager, detailed queue payloads, and remaining build/test conventions are left to implementation planning.
 
 The owner wants agents to ask about unresolved design choices that change product behavior, architecture, the data model, a public contract, or a security boundary. Agents should make routine implementation choices without asking a stream of tiny questions, while recording consequential choices for review.
+
+### Error diagnostics decision from 2026-11-08
+
+The owner requested stack traces in all backend error logs, extending the earlier startup-only exception. Original error messages and stacks are included in console and rotating file records for API, consumer, and owner CLI failures. Error events without an exception include a stack from the logging site. Logging infrastructure failures also include error details in stderr fallback records. These diagnostics may expose paths, document content, or secrets embedded in error messages; arbitrary error properties remain excluded. HTTP responses retain their existing public error contract. This decision supersedes the earlier requirement to omit arbitrary error messages and stacks.

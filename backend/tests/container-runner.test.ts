@@ -179,7 +179,7 @@ it('stops the container before reading untrusted output', async () => {
   expect((await generator.generate(input, output)).result).toBe('ok');
 });
 
-it('streams complete private diagnostics while bounding the captured error tail', async () => {
+it('never forwards raw diagnostics while bounding the captured error tail', async () => {
   const docker = join(root, 'docker');
   await writeFile(docker, '#!/bin/sh\nprintf "%070000d" 0 >&2\n');
   await chmod(docker, 0o700);
@@ -194,7 +194,7 @@ it('streams complete private diagnostics while bounding the captured error tail'
   try {
     const result = await runDocker(['run'], 1000);
     expect(result.stderr.length).toBe(64 * 1024);
-    expect(Buffer.concat(chunks).length).toBe(70_000);
+    expect(Buffer.concat(chunks).length).toBe(0);
   } finally {
     write.mockRestore();
   }

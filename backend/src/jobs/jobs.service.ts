@@ -1,3 +1,4 @@
+import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { JobError } from './jobs.errors.js';
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
@@ -128,6 +129,7 @@ export async function submitGeneration(
     data: unknown;
     uploads: ResourceUpload[];
   },
+  logger: Logger = silentLogger,
 ) {
   const template = await getTemplate(db, input.userId, input.templateId);
   const data = validateGenerationData(template.manifest as ManifestV1, input.data);
@@ -135,10 +137,13 @@ export async function submitGeneration(
   let preserveSnapshot = false;
 
   try {
+    logger.debug('generation.debug', { jobId, phase: 'snapshot' });
     const inputDirectory = await storage.snapshot(input.templateId, jobId);
     const templateDirectory = join(inputDirectory, 'template');
     const files = await textFiles(templateDirectory);
-    const main = files.find((file) => file.path === join(templateDirectory, 'template.tex'));
+    const main = files.find(
+      (file) => file.path === join(templateDirectory, 'template.tex'),
+    );
     if (!main?.text.trim()) throw new JobError('Template is empty');
 
     const aliases = findResourceAliases(files.map((file) => file.text));
@@ -149,7 +154,10 @@ export async function submitGeneration(
       }
       supplied.set(upload.alias, upload);
     }
-    if (aliases.length !== supplied.size || aliases.some((alias) => !supplied.has(alias))) {
+    if (
+      aliases.length !== supplied.size ||
+      aliases.some((alias) => !supplied.has(alias))
+    ) {
       throw new JobError('Required resource upload is missing');
     }
 
@@ -171,6 +179,7 @@ export async function submitGeneration(
       templateId: input.templateId,
     });
     try {
+      logger.debug('generation.debug', { jobId, phase: 'queue' });
       await queue.add(jobId);
     } catch {
       preserveSnapshot = true;
@@ -206,6 +215,7 @@ export async function reconcileQueuedJobs(
   db: Database,
   storage: Storage,
   queue: QueuePublisher,
+  logger: Logger = silentLogger,
 ): Promise<void> {
   for (const job of await listQueuedJobs(db)) {
     if (!(await storage.jobInputExists(job.id))) {
@@ -215,7 +225,10 @@ export async function reconcileQueuedJobs(
     try {
       await queue.add(job.id);
     } catch (error) {
-      console.error('Could not reconcile queued job', job.id, error);
+      logger.error('queue.reconciliation_failed', {
+        jobId: job.id,
+        ...safeError(error),
+      });
     }
   }
 }

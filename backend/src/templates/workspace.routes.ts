@@ -1,3 +1,4 @@
+import { beginAction, markActionSuccess, logDownload } from '../logging/http.js';
 import { rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Router, type Request, type RequestHandler } from 'express';
@@ -51,6 +52,7 @@ export function workspaceRoutes(
   router.use(owned);
 
   router.get('/', checkExact(), validateRequest, async (request, response) => {
+    beginAction(response);
     response.json({
       files: await storage.listTemplateTree(String(request.params.id)),
     });
@@ -63,21 +65,21 @@ export function workspaceRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       await storage.createDirectory(
         String(request.params.id),
         segments(request.body.segments),
       );
+      markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(201).end();
     },
   );
 
   router.get('/text', async (request: Request, response) => {
+    beginAction(response);
     exactQuery(request);
     response.json({
-      text: await storage.readText(
-        String(request.params.id),
-        querySegments(request),
-      ),
+      text: await storage.readText(String(request.params.id), querySegments(request)),
     });
   });
 
@@ -89,11 +91,13 @@ export function workspaceRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       await storage.writeText(
         String(request.params.id),
         segments(request.body.segments),
         request.body.text,
       );
+      markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },
   );
@@ -103,6 +107,7 @@ export function workspaceRoutes(
     requireCsrf(config),
     upload.single('file'),
     async (request, response) => {
+      beginAction(response);
       if (!request.file) throw new TemplateError('File is required');
       try {
         if (
@@ -123,6 +128,7 @@ export function workspaceRoutes(
           segments(parsed),
           request.file.path,
         );
+        markActionSuccess(response, { templateId: String(request.params.id) });
         response.status(201).end();
       } finally {
         await rm(request.file.path, { force: true });
@@ -131,15 +137,15 @@ export function workspaceRoutes(
   );
 
   router.get('/download', async (request: Request, response) => {
+    beginAction(response);
     exactQuery(request);
     const path = querySegments(request);
     const stream = await storage.openDownload(String(request.params.id), path);
     response.setHeader('Content-Type', 'application/octet-stream');
-    response.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${path.at(-1)}"`,
-    );
-    await pipeline(stream, response);
+    response.setHeader('Content-Disposition', `attachment; filename="${path.at(-1)}"`);
+    await logDownload(response, () => pipeline(stream, response), {
+      templateId: String(request.params.id),
+    });
   });
 
   router.post(
@@ -150,11 +156,13 @@ export function workspaceRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
+      beginAction(response);
       await storage.move(
         String(request.params.id),
         segments(request.body.from),
         segments(request.body.to),
       );
+      markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },
   );
@@ -166,10 +174,9 @@ export function workspaceRoutes(
     checkExact(),
     validateRequest,
     async (request, response) => {
-      await storage.delete(
-        String(request.params.id),
-        segments(request.body.segments),
-      );
+      beginAction(response);
+      await storage.delete(String(request.params.id), segments(request.body.segments));
+      markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },
   );
