@@ -13,9 +13,12 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "2.4.11",
+    "daisyui": "^5.7.50",
     "jsdom": "^31.0.0",
+    "tailwindcss": "^4.3.5",
     "typescript": "^5.9.3",
     "vite": "^8.3.6",
     "vitest": "^4.1.12",

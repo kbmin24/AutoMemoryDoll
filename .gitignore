@@ -154,6 +154,10 @@ compiler/target/
 
 docs/
 .superpowers/
+.taste-skill
+.impeccable
+
+data/
 
 ## RUST
 

@@ -16,22 +16,27 @@ restart the API. For deployment, serve both services behind HTTPS and set
 `NODE_ENV=production` so session cookies require HTTPS. Production hosting must route `/api` to Express and fall back to
 `index.html` for frontend routes.
 
-Task 7 provides login/logout, own password changes, private template listing
-and deletion, administrator account creation/disable, and owner role controls.
-Template creation/editing and document generation screens are later tasks.
+The frontend provides login/logout, own password changes, private template
+listing and deletion, template creation/editing, administrator account
+creation/disable, and owner role controls. Document generation remains a later task.
 Account creation is administrator-only; there is no public signup.
 
-The existing pages follow the approved design in `DESIGN.md` and
-`docs/design/approved-ui-mockup.html`: Noto Sans, warm paper surfaces,
-charcoal controls, compact top navigation, and responsive template cards.
+The frontend uses Tailwind CSS 4 through `@tailwindcss/vite` and daisyUI 5
+for buttons, form controls, cards, and tables. `src/style.css` defines the
+`automemorydoll` light theme, preserving the approved design's warm paper
+surfaces and charcoal controls. Theme colors live in daisyUI's semantic color
+variables; layouts and spacing use Tailwind utilities in the Vue templates.
+The `workspace` (720px) and `cards` (1000px) breakpoints preserve existing
+responsive layouts. No theme switcher or automatic dark theme is enabled.
+
+The existing pages retain Noto Sans, compact top navigation, and responsive
+template cards from `DESIGN.md` and `docs/design/approved-ui-mockup.html`.
 Noto Sans loads from Google Fonts with a sans-serif fallback when unavailable.
-The account trigger uses the locally served Font Awesome Free 6.7.2 regular user
-SVG at `public/images/user-regular.svg`, from the official
-[Font Awesome repository](https://github.com/FortAwesome/Font-Awesome/blob/6.7.2/svgs/regular/user.svg).
-Its embedded attribution and CC BY 4.0 license notice are preserved.
 The current templates API has no preview URLs or recent-use metadata, so cards
-show “Preview unavailable” and preserve server ordering. Generation and editing
-workspaces, including their mobile tabs, remain later tasks.
+show “Preview unavailable” and preserve server ordering. Template creation
+and editing include a file browser, text editor, and data-shape controls; the
+file browser and editor use separate tabs on mobile. Document generation
+remains a later task.
 
 Run `npm --workspace frontend test`, `npm --workspace frontend run typecheck`,
 and `npm run build:frontend`. Tests mount the real views and router with a

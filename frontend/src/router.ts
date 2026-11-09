@@ -5,6 +5,7 @@ import LoginView from './views/LoginView.vue';
 import AccountView from './views/AccountView.vue';
 import AdminUsersView from './views/AdminUsersView.vue';
 import TemplatesView from './views/TemplatesView.vue';
+import TemplateWorkspaceView from './views/TemplateWorkspaceView.vue';
 
 export function createAppRouter(history: RouterHistory = createWebHistory()) {
   let initialized = false;
@@ -14,6 +15,8 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       { path: '/', redirect: '/templates' },
       { path: '/login', component: LoginView },
       { path: '/templates', component: TemplatesView },
+      { path: '/templates/new', component: TemplateWorkspaceView },
+      { path: '/templates/:id/edit', component: TemplateWorkspaceView },
       { path: '/account', component: AccountView },
       {
         path: '/admin/users',

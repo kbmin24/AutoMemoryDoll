@@ -53,192 +53,88 @@ async function signOut() {
 </script>
 
 <template>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="top-bar">
-    <RouterLink to="/" class="brand">
-      <img src="/images/logo-large.svg" alt="AutoMemoryDoll" />
+  <a class="sr-only focus:not-sr-only focus:block focus:p-3" href="#main"
+    >Skip to content</a
+  >
+  <header
+    class="top-bar navbar min-h-[68px] flex-wrap gap-3 px-5 py-3.5 workspace:flex-nowrap workspace:gap-10 workspace:px-9 workspace:py-2.5"
+  >
+    <RouterLink to="/" class="brand flex min-h-11 shrink-0 items-center">
+      <img
+        src="/images/logo-large.svg"
+        class="block h-8 w-auto max-w-[calc(100vw-40px)]"
+        alt="AutoMemoryDoll"
+      />
     </RouterLink>
-    <nav v-if="session.user" aria-label="Main navigation">
-      <RouterLink to="/templates">Templates</RouterLink>
-      <RouterLink v-if="session.user.role !== 'user'" to="/admin/users"
+    <nav
+      class="order-3 flex basis-full shrink-0 gap-6 workspace:order-none workspace:basis-auto"
+      v-if="session.user"
+      aria-label="Main navigation"
+    >
+      <RouterLink
+        class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
+        to="/templates"
+        >Templates</RouterLink
+      >
+      <RouterLink
+        class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
+        v-if="session.user.role !== 'user'"
+        to="/admin/users"
         >Users</RouterLink
       >
     </nav>
     <div
       v-if="session.user"
       ref="accountControls"
-      class="session-controls"
+      class="relative ml-auto flex min-w-0 items-center justify-end gap-2 workspace:gap-4"
       @keydown.esc.stop.prevent="closeAccountMenu"
       @focusout="leaveAccountMenu"
     >
       <button
         ref="accountButton"
-        class="identity text-button"
+        class="btn identity btn-square min-w-0 p-0 text-base-content btn-ghost"
         aria-label="Account menu"
         :aria-expanded="accountMenuOpen"
         aria-controls="account-menu"
         @click="accountMenuOpen = !accountMenuOpen"
       >
-        <i class="fa-regular fa-user" aria-hidden="true"></i>
+        <i class="fa-solid fa-circle-user text-xl" aria-hidden="true"></i>
       </button>
-      <div v-if="accountMenuOpen" id="account-menu" class="account-popup">
-        <div class="account-username">{{ session.user.username }}</div>
-        <hr class="account-divider" />
-        <RouterLink to="/account">My Account</RouterLink>
-        <button class="text-button" :disabled="busy" @click="signOut">
+      <div
+        v-if="accountMenuOpen"
+        id="account-menu"
+        class="dropdown-content absolute top-[calc(100%+8px)] right-0 z-10 w-[min(200px,calc(100vw-40px))] rounded-box border border-outline bg-base-100 p-1.5 shadow-lg"
+      >
+        <div class="account-username px-3 py-2.5 font-semibold wrap-anywhere">
+          {{ session.user.username }}
+        </div>
+        <hr class="mx-1.5 my-1 border-0 border-t border-primary" />
+        <RouterLink
+          class="flex min-h-11 items-center rounded-field px-3 hover:bg-base-300"
+          to="/account"
+          >My Account</RouterLink
+        >
+        <button
+          class="btn btn-ghost w-full justify-start px-3"
+          :disabled="busy"
+          @click="signOut"
+        >
           Log out
         </button>
       </div>
     </div>
   </header>
-  <div class="shell" :class="{ guest: !session.user }">
-    <main id="main" tabindex="-1">
+  <div
+    class="mx-auto max-w-[1600px] pb-0 workspace:px-3 workspace:pb-3"
+    :class="{ guest: !session.user }"
+  >
+    <main
+      class="min-h-[calc(100dvh-80px)] min-w-0 bg-base-100 px-5 py-6 workspace:rounded-xl workspace:border workspace:border-outline workspace:p-9"
+      id="main"
+      tabindex="-1"
+    >
       <p v-if="error" role="alert">{{ error }}</p>
       <RouterView :key="$route.path" />
     </main>
   </div>
 </template>
-
-<style scoped>
-.text-button {
-  background: transparent;
-  border-color: transparent;
-}
-
-.top-bar nav {
-  display: flex;
-  gap: 24px;
-  flex-shrink: 0;
-}
-
-.top-bar nav a {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  text-decoration: none;
-  color: var(--muted);
-}
-
-.top-bar nav a:hover,
-.top-bar nav a.router-link-active {
-  color: #30312f;
-  text-decoration: underline;
-  text-underline-offset: 10px;
-}
-
-.top-bar {
-  min-height: 68px;
-  padding: 10px 36px;
-  display: flex;
-  align-items: center;
-  gap: 40px;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.6px;
-  flex-shrink: 0;
-}
-
-.brand img {
-  display: block;
-  height: 32px;
-  width: auto;
-}
-
-.identity {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  color: inherit;
-  overflow-wrap: anywhere;
-  min-width: 0;
-  font-size: inherit;
-}
-
-.fa-regular.fa-user {
-  display: block;
-  width: 18px;
-  height: 20px;
-  background-color: currentColor;
-  mask: url('/images/user-regular.svg') center / contain no-repeat;
-}
-
-.account-popup {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 10;
-  width: min(200px, calc(100vw - 40px));
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: 0 4px 16px rgb(48 49 47 / 10%);
-}
-
-.account-popup a,
-.account-popup button {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding: 10px 12px;
-  text-align: left;
-  text-decoration: none;
-  border: 1px solid transparent;
-  border-radius: 4px;
-}
-
-.account-popup a:hover {
-  background: #e9e7e1;
-}
-
-.account-username {
-  padding: 10px 12px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.account-divider {
-  margin: 4px 6px;
-  border: 0;
-  border-top: 1px solid var(--accent);
-}
-
-@media (max-width: 1000px) {
-  .template-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-
-@media (max-width: 720px) {
-    .top-bar {
-    padding: 14px 20px;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .brand {
-    font-size: 18px;
-  }
-
-  .session-controls {
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .top-bar nav {
-    order: 3;
-    flex-basis: 100%;
-    gap: 24px;
-  }
-}
-
-</style>

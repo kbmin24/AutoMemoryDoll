@@ -13,7 +13,9 @@ const templateId = randomUUID();
 const manifest = {
   version: 1,
   shape: {
-    fields: [{ variable: 'name', label: 'Name', type: 'text', optional: false }],
+    fields: [
+      { variable: 'name', label: 'Name', type: 'text', optional: false },
+    ],
   },
 };
 let root: string;
@@ -29,7 +31,9 @@ function dbForTests() {
         return template;
       }),
       findMany: vi.fn(async ({ where }: any) =>
-        template && template.ownedBy === where.ownedBy && template.deletedAt === null
+        template &&
+        template.ownedBy === where.ownedBy &&
+        template.deletedAt === null
           ? [template]
           : [],
       ),
@@ -47,7 +51,8 @@ function dbForTests() {
           template.id !== where.id ||
           template.ownedBy !== where.ownedBy ||
           (where.deletedAt === null && template.deletedAt !== null) ||
-          (where.deletedAt instanceof Date && template.deletedAt !== where.deletedAt)
+          (where.deletedAt instanceof Date &&
+            template.deletedAt !== where.deletedAt)
         )
           return { count: 0 };
         template = { ...template, ...data };
@@ -91,28 +96,49 @@ afterEach(async () => {
 
 describe('template and workspace routes', () => {
   async function create() {
-    return request(app).post('/api/templates').send({ name: 'Letters', manifest });
+    return request(app)
+      .post('/api/templates')
+      .send({ name: 'Letters', manifest });
   }
+
+  it('lists workspace files and rejects unexpected query fields', async () => {
+    const id = (await create()).body.template.id;
+    const response = await request(app).get(`/api/templates/${id}/files`);
+    expect(response.status).toBe(200);
+    expect(response.body.files).toEqual(expect.any(Array));
+    expect(
+      (await request(app).get(`/api/templates/${id}/files?unexpected=true`))
+        .status,
+    ).toBe(400);
+  });
 
   it('creates, updates, lists, and soft-deletes a private template', async () => {
     const created = await create();
     expect(created.status).toBe(201);
     expect(created.body.template.manifest).toEqual(manifest);
     const id = created.body.template.id;
-    expect(await readFile(join(root, 'templates', id, 'template.tex'), 'utf8')).toBe('');
-    expect((await request(app).get('/api/templates')).body.templates).toHaveLength(1);
+    expect(
+      await readFile(join(root, 'templates', id, 'template.tex'), 'utf8'),
+    ).toBe('');
+    expect(
+      (await request(app).get('/api/templates')).body.templates,
+    ).toHaveLength(1);
     const changed = await request(app)
       .patch(`/api/templates/${id}`)
       .send({ name: 'Renamed', manifest: { version: 1, shape: null } });
     expect(changed.body.template.name).toBe('Renamed');
     expect(changed.body.template.manifest.shape).toBeNull();
-    expect((await request(app).delete(`/api/templates/${id}`)).status).toBe(204);
+    expect((await request(app).delete(`/api/templates/${id}`)).status).toBe(
+      204,
+    );
     expect((await request(app).get(`/api/templates/${id}`)).status).toBe(404);
   });
 
   it('returns identical not-found responses for another owner and a deleted template', async () => {
     const id = (await create()).body.template.id;
-    const foreign = await request(app).get(`/api/templates/${id}`).set('X-Test-User', otherId);
+    const foreign = await request(app)
+      .get(`/api/templates/${id}`)
+      .set('X-Test-User', otherId);
     const foreignFile = await request(app)
       .get(`/api/templates/${id}/files`)
       .set('X-Test-User', otherId);
@@ -135,7 +161,11 @@ describe('template and workspace routes', () => {
       ).status,
     ).toBe(404);
     expect(
-      (await request(app).delete(`/api/templates/${id}`).set('X-Test-User', otherId)).status,
+      (
+        await request(app)
+          .delete(`/api/templates/${id}`)
+          .set('X-Test-User', otherId)
+      ).status,
     ).toBe(404);
     await request(app).delete(`/api/templates/${id}`);
     const deleted = await request(app).get(`/api/templates/${id}`);
@@ -193,14 +223,25 @@ describe('template and workspace routes', () => {
       ).status,
     ).toBe(400);
     expect(
-      (await request(app).get(`/api/templates/${id}/files/text`).query({ segments: '..' })).status,
+      (
+        await request(app)
+          .get(`/api/templates/${id}/files/text`)
+          .query({ segments: '..' })
+      ).status,
     ).toBe(400);
     expect(
-      (await request(app).get(`/api/templates/${id}/files/text`).query({ segments: 'missing.txt' }))
-        .status,
+      (
+        await request(app)
+          .get(`/api/templates/${id}/files/text`)
+          .query({ segments: 'missing.txt' })
+      ).status,
     ).toBe(404);
     expect(
-      (await request(app).get(`/api/templates/${id}/files/text?segments=%2Fetc%2Fpasswd`)).status,
+      (
+        await request(app).get(
+          `/api/templates/${id}/files/text?segments=%2Fetc%2Fpasswd`,
+        )
+      ).status,
     ).toBe(400);
     expect(
       (
@@ -227,23 +268,33 @@ describe('template and workspace routes', () => {
       .send({ manifest: { version: 1, shape: { fields: [] } } });
     expect(invalid.status).toBe(400);
     expect(invalid.body).toEqual({ error: 'Invalid workspace operation' });
-    expect((await request(app).get(`/api/templates/${id}`)).body.template.manifest).toEqual(
-      manifest,
-    );
+    expect(
+      (await request(app).get(`/api/templates/${id}`)).body.template.manifest,
+    ).toEqual(manifest);
   });
 
   it('restores visibility if workspace removal fails', async () => {
     const id = (await create()).body.template.id;
-    vi.spyOn(storage, 'removeTemplateRoot').mockRejectedValueOnce(new Error('disk failure'));
-    expect((await request(app).delete(`/api/templates/${id}`)).status).toBe(500);
+    vi.spyOn(storage, 'removeTemplateRoot').mockRejectedValueOnce(
+      new Error('disk failure'),
+    );
+    expect((await request(app).delete(`/api/templates/${id}`)).status).toBe(
+      500,
+    );
     expect((await request(app).get(`/api/templates/${id}`)).status).toBe(200);
   });
 });
 
-it.each(['Invalid internal state', 'Cannot connect to database', 'disk limit reached'])(
+it.each([
+  'Invalid internal state',
+  'Cannot connect to database',
+  'disk limit reached',
+])(
   'does not classify an internal error from its wording: %s',
   async (message) => {
-    const created = await request(app).post('/api/templates').send({ name: 'Letters', manifest });
+    const created = await request(app)
+      .post('/api/templates')
+      .send({ name: 'Letters', manifest });
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       vi.spyOn(storage, 'readText').mockRejectedValueOnce(new Error(message));
@@ -260,8 +311,12 @@ it.each(['Invalid internal state', 'Cannot connect to database', 'disk limit rea
 
 it('returns the existing generic response for a typed storage error regardless of wording', async () => {
   const { StorageError } = await import('../src/storage/storage.errors.js');
-  const created = await request(app).post('/api/templates').send({ name: 'Letters', manifest });
-  vi.spyOn(storage, 'readText').mockRejectedValueOnce(new StorageError('Wording changed'));
+  const created = await request(app)
+    .post('/api/templates')
+    .send({ name: 'Letters', manifest });
+  vi.spyOn(storage, 'readText').mockRejectedValueOnce(
+    new StorageError('Wording changed'),
+  );
   const response = await request(app)
     .get(`/api/templates/${created.body.template.id}/files/text`)
     .query({ segments: 'template.tex' });

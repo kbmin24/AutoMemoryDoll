@@ -2,6 +2,8 @@
 
 ## Interface design language: decisions from 2026-11-08
 
+The owner approved migrating frontend styling to Tailwind CSS and daisyUI on 2026-11-08, with the explicit correction to **keep the existing color scheme**. Use daisyUI components with a custom light theme preserving the approved warm surfaces and charcoal accent; do not adopt a built-in theme's replacement palette. Keep Noto Sans, brand assets, existing layouts, and application behavior. This supersedes custom control implementation details from the mockup, not the design's colors or product decisions. See the [approved migration design](docs/superpowers/specs/2026-11-08-tailwind-daisyui-design.md).
+
 The owner approved the Noto Sans mockup and explicitly confirmed that this design is what they want. The reference is [the approved UI mockup](docs/design/approved-ui-mockup.html), preserved independently of the temporary preview server. Its layout, colors, spacing, and interface typography are the frontend design target. Prototype-only navigation, sample content, and simulated generation are not additional product requirements. Product behavior not settled in the interview remains open.
 
 - The interface should feel practical and straightforward. DokuWiki's simplicity and Google Drive are owner-provided references; DokuWiki's dated appearance is not a target.
@@ -11,6 +13,7 @@ The owner approved the Noto Sans mockup and explicitly confirmed that this desig
 - Display the full name AutoMemoryDoll in the top bar.
 - Vertically center the logo in the top bar and link it to `/`.
 - Use the Font Awesome regular user icon (`fa-regular fa-user`) as the account popup button. Show the username first in the dropdown, followed by a bold divider, My Account, and Log out. These actions do not appear separately in the main navigation. This supersedes the earlier visible username button.
+- The account password-change form requires a second entry of the new password. Mismatched entries are rejected in the frontend before sending a password-change request; the backend API contract is unchanged.
 - The starting screen shows recently used templates as cards with document previews.
 - Selecting a template opens its generation form immediately.
 - The generation workspace places the form beside a document preview, similar to Overleaf. The preview updates only when the user clicks Generate, rather than automatically as values change. Initial preview content and preview behavior after edits or failures remain open.
@@ -185,6 +188,10 @@ Typst, Mustache, Carbone, ODT/DOCX templating, a custom templating engine, LaTTe
 The owner selected a shared Winston interface for the API and queue consumer, including safe compiler diagnostics collected by the consumer. Log HTTP requests and explicit action events as well as diagnostic errors; all obey the configured level. Successful events use `info`, rejected events `warn`, unexpected failures `error`, and extra safe diagnostics `debug`. Output JSON to console and separate API/consumer local files, with daily rotation, a configurable 20 MB default file size, and configurable 180-day default retention. An optional configurable per-service disk cap deletes the oldest files when reached, even before the retention period; it is disabled by default. Return the server-generated request ID in an `X-Request-ID` response header. Continue operating if file logging fails and report that failure to stderr.
 
 Include actor/target IDs, request/job correlation, and client IP for HTTP/authentication events. Exclude bodies, document data/content, passwords, cookies, authorization headers, and filenames. Cover authentication/password actions, account/role management, template/workspace changes, generation submission/outcome, and downloads. Configure trusted proxy IPs/CIDRs with no proxy trusted by default; the deployment proxy is undecided among Caddy, Apache, Nginx, or another choice. See the [approved logging design](docs/superpowers/specs/2026-11-08-logging-design.md) for implementation recommendations. The owner approved the design; prepare the implementation plan before product changes.
+
+On 2026-11-09, the owner changed the proxy policy: trust `127.0.0.1` and `::1`
+(the loopback addresses used by localhost) by default. `TRUSTED_PROXY_CIDRS`
+replaces these defaults when provided. This supersedes the earlier no-proxy default.
 
 ### Remaining project decisions
 

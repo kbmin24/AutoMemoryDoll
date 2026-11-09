@@ -23,16 +23,19 @@ async function submit() {
 }
 </script>
 <template>
-  <section class="login">
+  <section class="mx-auto my-[5vh] w-full max-w-[380px] workspace:my-[7vh]">
     <h1>Log in</h1>
-    <p>Open your private document templates.</p>
     <p v-if="route.query.passwordChanged === '1'" role="status">
       Password changed. Log in with your new password.
     </p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <form @submit.prevent="submit">
+    <form
+      class="flex w-full min-w-0 max-w-[480px] flex-col items-stretch [&>button]:mt-1 [&>button]:self-stretch workspace:[&>button]:self-start"
+      @submit.prevent="submit"
+    >
       <label for="username">Username</label>
       <input
+        class="input mb-5 min-h-[46px] w-full min-w-0"
         id="username"
         v-model="username"
         autocomplete="username"
@@ -41,6 +44,7 @@ async function submit() {
       />
       <label for="password">Password</label>
       <input
+        class="input mb-5 min-h-[46px] w-full min-w-0"
         id="password"
         v-model="password"
         type="password"
@@ -48,7 +52,7 @@ async function submit() {
         required
         maxlength="1024"
       />
-      <button class="primary" :disabled="busy">
+      <button class="btn btn-primary" :disabled="busy">
         {{ busy ? 'Logging in…' : 'Log in' }}
       </button>
     </form>

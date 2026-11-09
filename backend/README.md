@@ -124,14 +124,14 @@ levels use stdout. Successful HTTP requests and actions use `info`, rejections
 use `warn`, unexpected failures use `error`, and safe phase details use `debug`.
 All categories, including action audit events, obey `LOG_LEVEL`.
 
-| Variable              | Default    | Meaning                                                                                                          |
-| --------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| `LOG_LEVEL`           | `info`     | `error`, `warn`, `info`, or `debug`                                                                              |
-| `LOG_DIR`             | `./logs`   | Absolute path or path relative to the process working directory                                                  |
-| `LOG_RETENTION_DAYS`  | `180`      | Positive integer days; expiration uses UTC file dates                                                            |
-| `LOG_MAX_FILE_BYTES`  | `20971520` | Positive integer rotation threshold; whole-KB thresholds round down; individual records can exceed the threshold |
-| `LOG_MAX_TOTAL_BYTES` | unset      | Optional per-service application-log byte budget, at least `LOG_MAX_FILE_BYTES`; unset disables the cap          |
-| `TRUSTED_PROXY_CIDRS` | unset      | Comma-separated trusted proxy IPs/CIDRs; unset trusts no proxies                                                 |
+| Variable              | Default         | Meaning                                                                                                          |
+| --------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`           | `info`          | `error`, `warn`, `info`, or `debug`                                                                              |
+| `LOG_DIR`             | `./logs`        | Absolute path or path relative to the process working directory                                                  |
+| `LOG_RETENTION_DAYS`  | `180`           | Positive integer days; expiration uses UTC file dates                                                            |
+| `LOG_MAX_FILE_BYTES`  | `20971520`      | Positive integer rotation threshold; whole-KB thresholds round down; individual records can exceed the threshold |
+| `LOG_MAX_TOTAL_BYTES` | unset           | Optional per-service application-log byte budget, at least `LOG_MAX_FILE_BYTES`; unset disables the cap          |
+| `TRUSTED_PROXY_CIDRS` | `127.0.0.1,::1` | Comma-separated trusted proxy IPs/CIDRs; overrides the loopback defaults                                         |
 
 Empty provided settings and invalid values prevent startup without printing their
 contents. API and consumer environments can set different thresholds. With npm

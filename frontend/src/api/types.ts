@@ -24,3 +24,9 @@ export interface Template {
   name: string;
   manifest: { version: 1; shape: null | { fields: ShapeField[] } };
 }
+
+export interface TreeEntry {
+  name: string;
+  kind: 'file' | 'directory';
+  segments: string[];
+}

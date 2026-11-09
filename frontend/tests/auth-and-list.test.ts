@@ -196,6 +196,7 @@ describe('authentication and private templates', () => {
     const router = await open('/account');
     await wrapper!.get('#current-password').setValue('current-password');
     await wrapper!.get('#new-password').setValue('replacement-password');
+    await wrapper!.get('#confirm-password').setValue('replacement-password');
     await submit();
     expect(
       JSON.parse(
@@ -229,13 +230,38 @@ describe('authentication and private templates', () => {
     );
     await wrapper!.get('#current-password').setValue('wrong-password');
     await wrapper!.get('#new-password').setValue('replacement-password');
+    await wrapper!.get('#confirm-password').setValue('replacement-password');
     await submit();
     expect(router.currentRoute.value.path).toBe('/account');
     expect(session.user?.username).toBe('reader');
     expect(wrapper!.get('[role="alert"]').text()).toContain(
       'Current password is incorrect',
     );
+    expect(
+      (wrapper!.get('#confirm-password').element as HTMLInputElement).value,
+    ).toBe('');
   });
+  it.each(['', 'different-password'])(
+    'rejects confirmation %j without sending a password change and allows correction',
+    async (confirmation) => {
+      const router = await open('/account');
+      await wrapper!.get('#current-password').setValue('current-password');
+      await wrapper!.get('#new-password').setValue('replacement-password');
+      await wrapper!.get('#confirm-password').setValue(confirmation);
+      await submit();
+      expect(wrapper!.get('[role="alert"]').text()).toContain(
+        'New passwords do not match',
+      );
+      expect(calls.some((call) => call.path === '/api/auth/password')).toBe(
+        false,
+      );
+      expect(router.currentRoute.value.path).toBe('/account');
+      expect(session.user?.username).toBe('reader');
+      await wrapper!.get('#confirm-password').setValue('replacement-password');
+      await submit();
+      expect(router.currentRoute.value.path).toBe('/login');
+    },
+  );
   it('confirms deletion before removing the returned template', async () => {
     await open();
     await button('Delete').trigger('click');

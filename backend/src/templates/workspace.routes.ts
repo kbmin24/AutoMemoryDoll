@@ -1,15 +1,19 @@
-import { beginAction, markActionSuccess, logDownload } from '../logging/http.js';
+import {
+  beginAction,
+  markActionSuccess,
+  logDownload,
+} from '../logging/http.js';
 import { rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Router, type Request, type RequestHandler } from 'express';
-import { body, checkExact } from 'express-validator';
+import { body, checkExact, param } from 'express-validator';
 import { requireCsrf, type AuthRequest } from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
 import { validateSegments } from '../storage/paths.js';
 import { createUploadMiddleware } from '../storage/multer-upload.js';
-import { validateRequest } from '../validation.js';
+import { ACCOUNT_ID_PATTERN, validateRequest } from '../validation.js';
 import { getTemplate, TemplateError } from './templates.service.js';
 
 function segments(value: unknown): string[] {
@@ -49,14 +53,19 @@ export function workspaceRoutes(
       next(error);
     }
   };
-  router.use(owned);
+  router.use(param('id').matches(ACCOUNT_ID_PATTERN), validateRequest, owned);
 
-  router.get('/', checkExact(), validateRequest, async (request, response) => {
-    beginAction(response);
-    response.json({
-      files: await storage.listTemplateTree(String(request.params.id)),
-    });
-  });
+  router.get(
+    '/',
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      response.json({
+        files: await storage.listTemplateTree(String(request.params.id)),
+      });
+    },
+  );
 
   router.post(
     '/directories',
@@ -79,7 +88,10 @@ export function workspaceRoutes(
     beginAction(response);
     exactQuery(request);
     response.json({
-      text: await storage.readText(String(request.params.id), querySegments(request)),
+      text: await storage.readText(
+        String(request.params.id),
+        querySegments(request),
+      ),
     });
   });
 
@@ -142,7 +154,10 @@ export function workspaceRoutes(
     const path = querySegments(request);
     const stream = await storage.openDownload(String(request.params.id), path);
     response.setHeader('Content-Type', 'application/octet-stream');
-    response.setHeader('Content-Disposition', `attachment; filename="${path.at(-1)}"`);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${path.at(-1)}"`,
+    );
     await logDownload(response, () => pipeline(stream, response), {
       templateId: String(request.params.id),
     });
@@ -175,7 +190,10 @@ export function workspaceRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await storage.delete(String(request.params.id), segments(request.body.segments));
+      await storage.delete(
+        String(request.params.id),
+        segments(request.body.segments),
+      );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },

@@ -17,7 +17,9 @@ export async function api<T>(
   body?: unknown,
 ): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (body !== undefined && !(body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (method !== 'GET' && session.csrfToken) {
     headers['X-CSRF-Token'] = session.csrfToken;
   }
@@ -25,7 +27,9 @@ export async function api<T>(
     method,
     credentials: 'include',
     headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined
+      ? {}
+      : { body: body instanceof FormData ? body : JSON.stringify(body) }),
   });
   if (response.status === 401 && path !== '/api/auth/login') {
     if (path === '/api/auth/password') {
@@ -43,7 +47,8 @@ export async function api<T>(
         : 'Request failed. Please try again.',
     );
   }
-  return response.status === 204 ? (undefined as T) : response.json();
+  const content = await response.text();
+  return content.length === 0 ? (undefined as T) : JSON.parse(content);
 }
 
 export async function refreshSession() {

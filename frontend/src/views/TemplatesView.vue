@@ -40,36 +40,57 @@ async function remove() {
 </script>
 <template>
   <h1>Templates</h1>
+  <RouterLink class="btn btn-outline" to="/templates/new"
+    >New template</RouterLink
+  >
   <p>Your private document templates.</p>
   <p v-if="error" role="alert">
-    {{ error }} <button :disabled="busy" @click="load">Retry</button>
+    {{ error }}
+    <button class="btn" :disabled="busy" @click="load">Retry</button>
   </p>
   <p v-if="loading" role="status">Loading templates…</p>
   <template v-else>
-    <section v-if="pending" class="confirmation" aria-label="Confirm deletion">
+    <section
+      v-if="pending"
+      class="mt-6 rounded-box border border-outline bg-base-200 p-6 [&_button]:mr-2 [&_button]:mt-1"
+      aria-label="Confirm deletion"
+    >
       <h2>Delete {{ pending.name }}?</h2>
       <p>
         This removes its workspace files. Existing jobs and PDFs remain
         available.
       </p>
-      <button :disabled="busy" @click="remove">Delete template</button>
-      <button :disabled="busy" @click="pending = null">Cancel</button>
+      <button class="btn" :disabled="busy" @click="remove">
+        Delete template
+      </button>
+      <button class="btn" :disabled="busy" @click="pending = null">
+        Cancel
+      </button>
     </section>
     <ul
       v-if="templates.length"
-      class="template-grid"
+      class="mt-7 grid list-none grid-cols-1 gap-6 p-0 workspace:grid-cols-2 cards:grid-cols-3"
       aria-label="Owned templates"
     >
-      <li v-for="item in templates" :key="item.id" class="template-card">
-        <div class="template-preview">
-          <div class="preview-unavailable">Preview unavailable</div>
+      <li
+        v-for="item in templates"
+        :key="item.id"
+        class="template-card card min-w-0 overflow-hidden border border-outline bg-white"
+      >
+        <div class="grid h-[255px] place-items-center bg-base-300 p-6">
+          <div class="text-[13px] text-muted">Preview unavailable</div>
         </div>
-        <div class="template-details">
+        <div class="card-body gap-0 px-5 py-[18px] [&_h2]:m-0 [&_h2]:text-base">
           <h2>{{ item.name }}</h2>
-          <div class="template-footer">
+          <RouterLink class="link" :to="`/templates/${item.id}/edit`"
+            >Edit template</RouterLink
+          >
+          <div
+            class="mt-1 flex items-center justify-between gap-3 [&_p]:m-0 [&_p]:text-[13px]"
+          >
             <p>{{ item.manifest.shape ? 'Form' : 'JSON' }} input</p>
             <button
-              class="text-button"
+              class="btn btn-ghost"
               :disabled="busy"
               :aria-label="`Delete ${item.name}`"
               @click="pending = item"
@@ -80,6 +101,11 @@ async function remove() {
         </div>
       </li>
     </ul>
-    <p v-else-if="!error" class="empty">No templates yet.</p>
+    <p
+      v-else-if="!error"
+      class="mt-6 rounded-box border border-outline bg-base-200 p-6"
+    >
+      No templates yet.
+    </p>
   </template>
 </template>
