@@ -16,7 +16,11 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       { path: '/login', component: LoginView },
       { path: '/templates', component: TemplatesView },
       { path: '/templates/new', component: TemplateWorkspaceView },
-      { path: '/templates/:id/edit', component: TemplateWorkspaceView },
+      {
+        path: '/templates/:id/edit',
+        component: TemplateWorkspaceView,
+        meta: { workspace: true },
+      },
       { path: '/account', component: AccountView },
       {
         path: '/admin/users',

@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -320,6 +321,93 @@ it('returns the existing generic response for a typed storage error regardless o
   const response = await request(app)
     .get(`/api/templates/${created.body.template.id}/files/text`)
     .query({ segments: 'template.tex' });
+  expect(response.status).toBe(400);
+  expect(response.body).toEqual({ error: 'Invalid workspace operation' });
+});
+
+it('serves only validated image previews with private security headers', async () => {
+  const created = await request(app)
+    .post('/api/templates')
+    .send({ name: 'Letters', manifest });
+  const id = created.body.template.id;
+  const pixels = await sharp({
+    create: { width: 4, height: 3, channels: 3, background: 'red' },
+  })
+    .jpeg()
+    .toBuffer();
+  await request(app)
+    .post(`/api/templates/${id}/files/uploads`)
+    .field('segments', JSON.stringify(['mislabeled.png']))
+    .attach('file', pixels, {
+      filename: 'mislabeled.png',
+      contentType: 'text/html',
+    })
+    .expect(201);
+  const preview = await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'mislabeled.png' });
+  expect(preview.status).toBe(200);
+  expect(preview.headers['content-type']).toBe('image/png');
+  expect(preview.headers['x-content-type-options']).toBe('nosniff');
+  expect(preview.headers['cache-control']).toBe('private, no-store');
+  expect(preview.headers['cross-origin-resource-policy']).toBe('same-origin');
+  expect(preview.headers['content-security-policy']).toContain(
+    "default-src 'none'",
+  );
+  expect(preview.headers['content-disposition']).toBe(
+    'inline; filename="preview.png"',
+  );
+  expect((await sharp(preview.body).metadata()).format).toBe('png');
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'mislabeled.png' })
+    .set('X-Test-User', otherId)
+    .expect(404);
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: '../secret' })
+    .expect(400);
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'mislabeled.png', extra: 'x' })
+    .expect(400);
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'mislabeled.png' })
+    .send({ extra: 'x' })
+    .expect(400);
+  await request(app).get(`/api/templates/${id}/files/preview`).expect(400);
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'absent.png' })
+    .expect(404);
+});
+
+it('rejects fake image content and reports binary text reads as a controlled 400', async () => {
+  const created = await request(app)
+    .post('/api/templates')
+    .send({ name: 'Letters', manifest });
+  const id = created.body.template.id;
+  await request(app)
+    .post(`/api/templates/${id}/files/uploads`)
+    .field('segments', JSON.stringify(['fake.png']))
+    .attach('file', Buffer.from('<svg onload="alert(1)"/>'), {
+      filename: 'fake.png',
+      contentType: 'image/png',
+    })
+    .expect(201);
+  await request(app)
+    .get(`/api/templates/${id}/files/preview`)
+    .query({ segments: 'fake.png' })
+    .expect(400);
+  await request(app)
+    .post(`/api/templates/${id}/files/uploads`)
+    .field('segments', JSON.stringify(['binary.png']))
+    .attach('file', Buffer.from([137, 80, 78, 71]), 'binary.png')
+    .expect(201);
+  const response = await request(app)
+    .get(`/api/templates/${id}/files/text`)
+    .query({ segments: 'binary.png' });
   expect(response.status).toBe(400);
   expect(response.body).toEqual({ error: 'Invalid workspace operation' });
 });

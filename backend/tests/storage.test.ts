@@ -1,6 +1,6 @@
 import { StorageError } from '../src/storage/storage.errors.js';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -64,6 +64,17 @@ describe('rooted storage', () => {
     await storage.delete(id, ['assets', 'b.txt']);
     await expect(storage.readText(id, ['assets', 'b.txt'])).rejects.toThrow();
     await expect(storage.delete(id, ['template.tex'])).rejects.toThrow();
+  });
+
+  it('rejects invalid UTF-8 as a normal storage error', async () => {
+    await storage.moveUpload(
+      id,
+      ['binary.png'],
+      await staged(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+    );
+    await expect(storage.readText(id, ['binary.png'])).rejects.toBeInstanceOf(
+      StorageError,
+    );
   });
 
   it('rejects links and oversize text', async () => {
@@ -159,4 +170,34 @@ it('uses the collision code even when the diagnostic wording changes', async () 
   } finally {
     target.mockRestore();
   }
+});
+
+it('bounds preview reads and rejects symlinks, hardlinks and traversal', async () => {
+  await storage.moveUpload(id, ['image.png'], await staged('contents'));
+  expect(await storage.readPreviewInput(id, ['image.png'])).toEqual(
+    Buffer.from('contents'),
+  );
+  await symlink(
+    join(root, 'templates', id, 'image.png'),
+    join(root, 'templates', id, 'symlink.png'),
+  );
+  await link(
+    join(root, 'templates', id, 'image.png'),
+    join(root, 'templates', id, 'hardlink.png'),
+  );
+  await expect(storage.readPreviewInput(id, ['symlink.png'])).rejects.toThrow();
+  await expect(
+    storage.readPreviewInput(id, ['hardlink.png']),
+  ).rejects.toThrow();
+  await expect(
+    storage.readPreviewInput(id, ['..', 'image.png']),
+  ).rejects.toThrow();
+  await expect(storage.readPreviewInput(id, [])).rejects.toThrow();
+  await writeFile(
+    join(root, 'templates', id, 'oversize.png'),
+    Buffer.alloc(20 * 1024 * 1024 + 1),
+  );
+  await expect(
+    storage.readPreviewInput(id, ['oversize.png']),
+  ).rejects.toBeInstanceOf(StorageError);
 });

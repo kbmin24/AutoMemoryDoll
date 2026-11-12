@@ -15,6 +15,7 @@ export abstract class Storage {
   abstract writeText(templateId: string, segments: string[], text: string): Promise<void>;
   abstract uploadStagingDirectory(): Promise<string>;
   abstract moveUpload(templateId: string, segments: string[], temporaryPath: string): Promise<void>;
+  abstract readPreviewInput(templateId: string, segments: string[]): Promise<Buffer>;
   abstract openDownload(templateId: string, segments: string[]): Promise<Readable>;
   abstract move(templateId: string, from: string[], to: string[]): Promise<void>;
   abstract delete(templateId: string, segments: string[]): Promise<void>;

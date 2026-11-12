@@ -6,11 +6,12 @@ import {
 import { rm } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Router, type Request, type RequestHandler } from 'express';
-import { body, checkExact, param } from 'express-validator';
+import { body, checkExact, param, query } from 'express-validator';
 import { requireCsrf, type AuthRequest } from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
+import { createImagePreview } from '../storage/image-preview.js';
 import { validateSegments } from '../storage/paths.js';
 import { createUploadMiddleware } from '../storage/multer-upload.js';
 import { ACCOUNT_ID_PATTERN, validateRequest } from '../validation.js';
@@ -145,6 +146,39 @@ export function workspaceRoutes(
       } finally {
         await rm(request.file.path, { force: true });
       }
+    },
+  );
+
+  router.get(
+    '/preview',
+    body().custom((value: unknown) => value === undefined),
+    query('segments').custom((value: unknown) => {
+      segments(typeof value === 'string' ? [value] : value);
+      return true;
+    }),
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request: Request, response) => {
+      beginAction(response);
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+      response.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; sandbox",
+      );
+      const path = querySegments(request);
+      const preview = await createImagePreview(() =>
+        storage.readPreviewInput(String(request.params.id), path),
+      );
+      response.setHeader('Content-Type', 'image/png');
+      response.setHeader(
+        'Content-Disposition',
+        'inline; filename="preview.png"',
+      );
+      response.setHeader('Content-Length', preview.length);
+      markActionSuccess(response, { templateId: String(request.params.id) });
+      response.end(preview);
     },
   );
 

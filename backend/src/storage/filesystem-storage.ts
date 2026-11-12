@@ -158,8 +158,14 @@ export class FileSystemStorage extends Storage {
         if (!info.isFile() || info.nlink !== 1 || info.size > TEXT_LIMIT)
           throw new StorageError('Not an editable text file');
         const bytes = await file.readFile();
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        if (text.includes('\0')) throw new StorageError('Not an editable text file');
+        let text: string;
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch {
+          throw new StorageError('Not an editable text file');
+        }
+        if (text.includes('\0'))
+          throw new StorageError('Not an editable text file');
         return text;
       } finally {
         await file.close();
@@ -221,6 +227,19 @@ export class FileSystemStorage extends Storage {
         await rm(temporaryPath, { force: true });
       }
     });
+  }
+
+  async readPreviewInput(id: string, segments: string[]): Promise<Buffer> {
+    const stream = await this.openDownload(id, segments);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > FILE_LIMIT)
+        throw new StorageError('Image size limit exceeded');
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks, size);
   }
 
   async openDownload(id: string, segments: string[]): Promise<Readable> {
