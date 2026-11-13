@@ -162,7 +162,7 @@ describe('authentication and private templates', () => {
     await accountButton().trigger('click');
     expect(accountButton().attributes('aria-expanded')).toBe('true');
     expect(accountButton().attributes('aria-label')).toBe('Account menu');
-    expect(accountButton().find('.fa-regular.fa-user').exists()).toBe(true);
+    expect(accountButton().find('.fa-solid.fa-circle-user').exists()).toBe(true);
     expect(accountButton().text()).toBe('');
     expect(wrapper!.get('#account-menu > :first-child').text()).toBe('reader');
     expect(
