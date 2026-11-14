@@ -1,8 +1,9 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type { Database } from '../users/users.repository.js';
+type TemplateDatabase = Pick<Database, 'template'>;
 import type { ManifestV1 } from '../contracts.js';
 
-export function listOwnedTemplates(db: Database, userId: string) {
+export function listOwnedTemplates(db: TemplateDatabase, userId: string) {
   return db.template.findMany({
     where: { ownedBy: userId, deletedAt: null },
     orderBy: { name: 'asc' },
@@ -10,7 +11,7 @@ export function listOwnedTemplates(db: Database, userId: string) {
 }
 
 export function findOwnedTemplate(
-  db: Database,
+  db: TemplateDatabase,
   userId: string,
   templateId: string,
 ) {
@@ -20,7 +21,7 @@ export function findOwnedTemplate(
 }
 
 export function insertTemplate(
-  db: Database,
+  db: TemplateDatabase,
   id: string,
   userId: string,
   name: string,
@@ -37,7 +38,7 @@ export function insertTemplate(
 }
 
 export function updateOwnedTemplate(
-  db: Database,
+  db: TemplateDatabase,
   userId: string,
   templateId: string,
   patch: { name?: string; manifest?: ManifestV1; deletedAt?: Date | null },

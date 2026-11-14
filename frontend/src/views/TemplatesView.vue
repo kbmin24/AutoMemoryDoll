@@ -4,12 +4,14 @@ import { api } from '../api/client';
 import type { Template } from '../api/types';
 const templates = ref<Template[]>([]);
 const loading = ref(true);
+const unavailablePreviews = ref(new Set<string>());
 const error = ref('');
 const pending = ref<Template | null>(null);
 const busy = ref(false);
 async function load() {
   loading.value = true;
   error.value = '';
+  unavailablePreviews.value = new Set();
   try {
     templates.value = (
       await api<{ templates: Template[] }>('/api/templates')
@@ -77,9 +79,21 @@ async function remove() {
         :key="item.id"
         class="template-card card min-w-0 overflow-hidden border border-outline bg-white"
       >
-        <div class="grid h-[255px] place-items-center bg-base-300 p-6">
-          <div class="text-[13px] text-muted">Preview unavailable</div>
-        </div>
+        <RouterLink
+          class="grid h-[255px] place-items-center bg-base-300 p-6"
+          :to="`/templates/${item.id}/generate`"
+          :aria-label="`Generate from ${item.name}`"
+        >
+          <img
+            v-if="!unavailablePreviews.has(item.id)"
+            class="h-full min-h-0 w-full object-contain"
+            :src="`/api/templates/${item.id}/preview`"
+            alt=""
+            loading="lazy"
+            @error="unavailablePreviews.add(item.id)"
+          />
+          <span v-else class="text-[13px] text-muted">Preview unavailable</span>
+        </RouterLink>
         <div class="card-body gap-0 px-5 py-[18px] [&_h2]:m-0 [&_h2]:text-base">
           <h2>
             <RouterLink class="link" :to="`/templates/${item.id}/generate`">{{

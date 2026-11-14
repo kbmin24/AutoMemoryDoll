@@ -1,3 +1,4 @@
+import type { PreviewScheduler } from './templates/template-preview.js';
 import express from 'express';
 import { requestLogging, logRequestError, failAction } from './logging/http.js';
 import { silentLogger, type Logger } from './logging/logger.js';
@@ -22,6 +23,7 @@ export function createApp(
   queue?: QueuePublisher,
   logger: Logger = silentLogger,
   trustedProxies: string[] = [],
+  previews?: PreviewScheduler,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -31,7 +33,10 @@ export function createApp(
   app.use('/api/auth', authRoutes(db, config));
   app.use('/api/admin', adminRoutes(db, config));
   app.use('/api/owner', ownerRoutes(db, config));
-  app.use('/api/templates', templatesRoutes(db, config, storage, queue));
+  app.use(
+    '/api/templates',
+    templatesRoutes(db, config, storage, queue, previews, logger),
+  );
   if (queue) app.use('/api/jobs', jobsRoutes(db, config, storage));
   app.use(
     (
@@ -50,13 +55,17 @@ export function createApp(
         response.destroy();
         return;
       }
-      if (error instanceof AccountError) return reply(error.status, error.message);
-      if (error instanceof TemplateError) return reply(error.status, error.publicMessage);
+      if (error instanceof AccountError)
+        return reply(error.status, error.message);
+      if (error instanceof TemplateError)
+        return reply(error.status, error.publicMessage);
       if (error instanceof JobError) return reply(error.status, error.message);
-      if (error instanceof multer.MulterError) return reply(400, 'Invalid upload');
+      if (error instanceof multer.MulterError)
+        return reply(400, 'Invalid upload');
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
         return reply(404, 'File not found');
-      if (error instanceof StorageError) return reply(400, 'Invalid workspace operation');
+      if (error instanceof StorageError)
+        return reply(400, 'Invalid workspace operation');
       logRequestError(logger, response, error);
       return reply(500, 'Internal server error');
     },

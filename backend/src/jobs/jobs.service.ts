@@ -1,3 +1,4 @@
+import { withTemplateLock } from '../templates/template-lock.js';
 import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { JobError } from './jobs.errors.js';
 import { randomUUID } from 'node:crypto';
@@ -15,7 +16,10 @@ import {
   listOwnedJobs,
   listQueuedJobs,
 } from './jobs.repository.js';
-import { findResourceAliases, rewriteResourceTokens } from './resource-tokens.js';
+import {
+  findResourceAliases,
+  rewriteResourceTokens,
+} from './resource-tokens.js';
 
 export { JobError } from './jobs.errors.js';
 
@@ -50,7 +54,10 @@ export function validateGenerationData(
   const data: Record<string, unknown> = {};
   for (const field of manifest.shape.fields) {
     const value = input[field.variable];
-    if (value === undefined || (field.optional && (value === '' || value === null))) {
+    if (
+      value === undefined ||
+      (field.optional && (value === '' || value === null))
+    ) {
       if (!field.optional) throw new JobError('Invalid generation data');
       continue;
     }
@@ -64,7 +71,8 @@ export function validateGenerationData(
         throw new JobError('Invalid generation data');
       }
     } else if (field.type === 'boolean') {
-      if (typeof value !== 'boolean') throw new JobError('Invalid generation data');
+      if (typeof value !== 'boolean')
+        throw new JobError('Invalid generation data');
     }
     data[field.variable] = value;
   }
@@ -96,7 +104,9 @@ function decodeTemplateText(bytes: Buffer): string | null {
   }
 }
 
-async function textFiles(root: string): Promise<{ path: string; text: string }[]> {
+export async function textFiles(
+  root: string,
+): Promise<{ path: string; text: string }[]> {
   const result: { path: string; text: string }[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -116,7 +126,9 @@ async function textFiles(root: string): Promise<{ path: string; text: string }[]
 
 function storedName(upload: ResourceUpload): string {
   const extension = extname(upload.originalName ?? '');
-  const safeExtension = /^\.[A-Za-z0-9]{1,16}$/.test(extension) ? extension : '';
+  const safeExtension = /^\.[A-Za-z0-9]{1,16}$/.test(extension)
+    ? extension
+    : '';
   return `${randomUUID()}${safeExtension}`;
 }
 
@@ -152,14 +164,22 @@ export async function submitGeneration(
   },
   logger: Logger = silentLogger,
 ) {
-  const template = await getTemplate(db, input.userId, input.templateId);
-  const data = validateGenerationData(template.manifest as ManifestV1, input.data);
   const jobId = randomUUID();
   let preserveSnapshot = false;
 
   try {
     logger.debug('generation.debug', { jobId, phase: 'snapshot' });
-    const inputDirectory = await storage.snapshot(input.templateId, jobId);
+    const { inputDirectory, data } = await withTemplateLock(
+      db,
+      storage,
+      input.templateId,
+      input.userId,
+      async (_tx, template) => {
+        const data = validateGenerationData(template.manifest, input.data);
+        const inputDirectory = await storage.snapshot(input.templateId, jobId);
+        return { inputDirectory, data };
+      },
+    );
     const templateDirectory = join(inputDirectory, 'template');
     const files = await textFiles(templateDirectory);
     const main = files.find(
@@ -204,7 +224,11 @@ export async function submitGeneration(
       await queue.add(jobId);
     } catch {
       preserveSnapshot = true;
-      const failed = await failQueuedJob(db, jobId, 'Could not queue generation');
+      const failed = await failQueuedJob(
+        db,
+        jobId,
+        'Could not queue generation',
+      );
       preserveSnapshot = failed.count === 0;
       throw new JobError('Could not queue generation', 503);
     }

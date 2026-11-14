@@ -2,7 +2,11 @@ import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { spawn } from 'node:child_process';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { validateId } from '../storage/paths.js';
-import { PdfGenerator, type CompilerResult } from './pdf-generator.js';
+import {
+  PdfGenerator,
+  type PreviewResult,
+  type CompilerResult,
+} from './pdf-generator.js';
 import type { CompilerConfig } from './config.js';
 
 export type DockerResult = { code: number | null; stderr: string };
@@ -58,7 +62,29 @@ export class ContainerPdfGenerator extends PdfGenerator {
     super();
   }
 
-  async generate(inputDir: string, outputDir: string): Promise<CompilerResult> {
+  generate(inputDir: string, outputDir: string): Promise<CompilerResult> {
+    return this.generateForMode(inputDir, outputDir, false);
+  }
+
+  generatePreview(inputDir: string, outputDir: string): Promise<PreviewResult> {
+    return this.generateForMode(inputDir, outputDir, true);
+  }
+
+  private generateForMode(
+    inputDir: string,
+    outputDir: string,
+    preview: false,
+  ): Promise<CompilerResult>;
+  private generateForMode(
+    inputDir: string,
+    outputDir: string,
+    preview: true,
+  ): Promise<PreviewResult>;
+  private async generateForMode(
+    inputDir: string,
+    outputDir: string,
+    preview: boolean,
+  ): Promise<CompilerResult | PreviewResult> {
     if (
       !isAbsolute(inputDir) ||
       !isAbsolute(outputDir) ||
@@ -97,6 +123,7 @@ export class ContainerPdfGenerator extends PdfGenerator {
           '--tmpfs',
           '/tmp:rw,nosuid,nodev,noexec,mode=1777',
           this.config.image,
+          ...(preview ? ['/input', '/output', '--preview'] : []),
         ],
         this.config.wallTimeMs,
       );
@@ -111,9 +138,11 @@ export class ContainerPdfGenerator extends PdfGenerator {
       // Killing the CLI alone does not guarantee the daemon stopped the container.
       await this.stop(jobId);
     }
-    let manifest: CompilerResult;
+    let manifest: CompilerResult | PreviewResult;
     try {
-      manifest = await this.readResult(outputDir);
+      manifest = preview
+        ? await this.readResult(outputDir, true)
+        : await this.readResult(outputDir);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       this.logger.error('compiler.failed', {

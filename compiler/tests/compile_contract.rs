@@ -149,3 +149,18 @@ fn command_writes_pdf_and_success_manifest() {
             .starts_with(b"%PDF-")
     );
 }
+
+#[test]
+fn document_date_is_not_the_default_unix_epoch() {
+    let Some(bundle) = bundle_path() else { return };
+    let root = TestDir::new();
+    let template = root.path().join("template");
+    fs::create_dir(&template).unwrap();
+    let pdf = compile_pdf(
+        r"\documentclass{article}\begin{document}\ifnum\year<2020\errmessage{Compiler date is stuck at the Unix epoch}\fi\today\end{document}",
+        &template,
+        &bundle,
+        &root.path().join("scratch"),
+    ).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+}

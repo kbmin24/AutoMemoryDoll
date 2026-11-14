@@ -1,7 +1,18 @@
+import { spawn } from 'node:child_process';
 import { StorageError } from './storage.errors.js';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import { Storage, type TreeEntry } from './storage.js';
@@ -46,7 +57,45 @@ export class FileSystemStorage extends Storage {
     }
   }
 
-  private async ordinary(path: string, kind?: 'file' | 'directory'): Promise<void> {
+  async withTemplateFileLock<T>(
+    templateId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const parent = join(this.root, 'template-locks');
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    await this.ordinary(parent, 'directory');
+    const file = await open(
+      join(parent, `${validateId(templateId)}.lock`),
+      constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink !== 1)
+        throw new Error('Invalid template lock file');
+      // flock inherits the same open file description; our handle retains its lock after the child exits.
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('flock', ['--exclusive', '--timeout', '5', '3'], {
+          stdio: ['ignore', 'ignore', 'ignore', file.fd],
+        });
+        child.once('error', reject);
+        child.once('close', (code) =>
+          code === 0
+            ? resolve()
+            : reject(new Error('Template lock unavailable')),
+        );
+      });
+      return await action();
+    } finally {
+      await file.close();
+    }
+    // Lock files are never unlinked: replacing their inode could split coordination between processes.
+  }
+
+  private async ordinary(
+    path: string,
+    kind?: 'file' | 'directory',
+  ): Promise<void> {
     const info = await lstat(path);
     if (
       info.isSymbolicLink() ||
@@ -59,7 +108,11 @@ export class FileSystemStorage extends Storage {
   }
 
   // Validates that the path exists and is of the expected kind, or that it does not exist if leafExists is false.
-  private async target(id: string, segments: string[], leafExists: boolean): Promise<string> {
+  private async target(
+    id: string,
+    segments: string[],
+    leafExists: boolean,
+  ): Promise<string> {
     const names = validateSegments(segments);
     let path = this.template(id);
     await this.ordinary(path, 'directory');
@@ -118,7 +171,8 @@ export class FileSystemStorage extends Storage {
 
   private async stagedFile(path: string): Promise<number> {
     const dir = await this.uploadStagingDirectory();
-    if (dirname(resolve(path)) !== dir) throw new Error('Upload is outside staging directory');
+    if (dirname(resolve(path)) !== dir)
+      throw new Error('Upload is outside staging directory');
     await this.ordinary(path, 'file');
     return (await lstat(path)).size;
   }
@@ -179,7 +233,8 @@ export class FileSystemStorage extends Storage {
     await this.locked(id, async () => {
       const names = validateSegments(segments);
       const path = await this.target(id, names, false).catch(async (error) => {
-        if (!(error instanceof StorageError) || error.code !== 'ALREADY_EXISTS') throw error;
+        if (!(error instanceof StorageError) || error.code !== 'ALREADY_EXISTS')
+          throw error;
         const existing = await this.target(id, names, true);
         await this.ordinary(existing, 'file');
         return existing;
@@ -190,13 +245,19 @@ export class FileSystemStorage extends Storage {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      if ((await this.workspaceBytes(id)) - oldSize + Buffer.byteLength(text) > WORKSPACE_LIMIT)
+      if (
+        (await this.workspaceBytes(id)) - oldSize + Buffer.byteLength(text) >
+        WORKSPACE_LIMIT
+      )
         throw new StorageError('Workspace size limit exceeded');
       const temp = join(this.template(id), `.write-${randomUUID()}`);
       try {
         const file = await open(
           temp,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+          constants.O_WRONLY |
+            constants.O_CREAT |
+            constants.O_EXCL |
+            constants.O_NOFOLLOW,
           0o600,
         );
         try {
@@ -212,7 +273,11 @@ export class FileSystemStorage extends Storage {
     });
   }
 
-  async moveUpload(id: string, segments: string[], temporaryPath: string): Promise<void> {
+  async moveUpload(
+    id: string,
+    segments: string[],
+    temporaryPath: string,
+  ): Promise<void> {
     await this.locked(id, async () => {
       await this.stagedFile(temporaryPath);
       try {
@@ -285,17 +350,28 @@ export class FileSystemStorage extends Storage {
   }
 
   async snapshot(id: string, jobId: string): Promise<string> {
+    return this.copySnapshot(id, this.job(jobId));
+  }
+
+  async snapshotPreview(id: string, runId: string): Promise<string> {
+    return this.copySnapshot(id, this.previewRun(runId));
+  }
+
+  private previewRun(runId: string): string {
+    return join(this.root, 'preview-runs', validateId(runId));
+  }
+
+  private async copySnapshot(id: string, jobRoot: string): Promise<string> {
     return this.locked(id, async () => {
-      const jobRoot = this.job(jobId);
-      await mkdir(join(this.root, 'jobs'), { recursive: true });
-      await this.ordinary(join(this.root, 'jobs'), 'directory');
+      await mkdir(dirname(jobRoot), { recursive: true, mode: 0o700 });
+      await this.ordinary(dirname(jobRoot), 'directory');
       await mkdir(jobRoot, { mode: 0o700 });
-      const input = join(this.job(jobId), 'input');
+      const input = join(jobRoot, 'input');
       const template = join(input, 'template');
-      const entries = await this.entries(id);
-      await mkdir(template, { recursive: true });
-      await mkdir(join(input, 'resources'));
       try {
+        const entries = await this.entries(id);
+        await mkdir(template, { recursive: true });
+        await mkdir(join(input, 'resources'));
         for (const entry of entries) {
           const dest = join(template, ...entry.segments);
           if (entry.kind === 'directory') await mkdir(dest);
@@ -307,10 +383,137 @@ export class FileSystemStorage extends Storage {
         }
         return input;
       } catch (error) {
-        await rm(this.job(jobId), { recursive: true, force: true });
+        await rm(jobRoot, { recursive: true, force: true });
         throw error;
       }
     });
+  }
+
+  async preparePreviewOutput(
+    runId: string,
+  ): Promise<{ input: string; output: string }> {
+    const root = this.previewRun(runId);
+    await this.ordinary(dirname(root), 'directory');
+    await this.ordinary(root, 'directory');
+    const input = join(root, 'input');
+    await this.ordinary(input, 'directory');
+    const output = join(root, 'output');
+    await mkdir(output, { mode: 0o700 });
+    return { input, output };
+  }
+
+  private async previewDirectory(
+    templateId: string,
+    create = false,
+  ): Promise<string> {
+    const parent = join(this.root, 'previews');
+    const dir = join(parent, validateId(templateId));
+    if (create) await mkdir(parent, { recursive: true, mode: 0o700 });
+    await this.ordinary(parent, 'directory');
+    if (create) await mkdir(dir, { recursive: true, mode: 0o700 });
+    await this.ordinary(dir, 'directory');
+    return dir;
+  }
+
+  async publishPreview(templateId: string, runId: string): Promise<void> {
+    const root = this.previewRun(runId);
+    await this.ordinary(dirname(root), 'directory');
+    await this.ordinary(root, 'directory');
+    const output = join(root, 'output');
+    await this.ordinary(output, 'directory');
+    const file = await open(
+      join(output, 'preview.webp'),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    let bytes: Buffer;
+    try {
+      const info = await file.stat();
+      if (
+        !info.isFile() ||
+        info.nlink !== 1 ||
+        info.size > 2 * 1024 * 1024 ||
+        info.size < 12
+      )
+        throw new Error('Invalid preview output');
+      bytes = await file.readFile();
+      if (
+        bytes.length > 2 * 1024 * 1024 ||
+        !bytes.subarray(0, 4).equals(Buffer.from('RIFF')) ||
+        !bytes.subarray(8, 12).equals(Buffer.from('WEBP'))
+      )
+        throw new Error('Invalid preview output');
+    } finally {
+      await file.close();
+    }
+    const dir = await this.previewDirectory(templateId, true);
+    const temp = join(dir, `.preview-${randomUUID()}`);
+    try {
+      await writeFile(temp, bytes, { flag: 'wx', mode: 0o600 });
+      await rename(temp, join(dir, 'preview.webp'));
+    } finally {
+      await rm(temp, { force: true });
+    }
+  }
+
+  async openTemplatePreview(templateId: string): Promise<Readable> {
+    const dir = await this.previewDirectory(templateId);
+    const file = await open(
+      join(dir, 'preview.webp'),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const info = await file.stat();
+    if (!info.isFile() || info.nlink !== 1 || info.size > 2 * 1024 * 1024) {
+      await file.close();
+      throw new Error('Invalid preview file');
+    }
+    return file.createReadStream();
+  }
+
+  async templatePreviewExists(templateId: string): Promise<boolean> {
+    try {
+      const stream = await this.openTemplatePreview(templateId);
+      stream.destroy();
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
+  async removeTemplatePreview(templateId: string): Promise<void> {
+    try {
+      const dir = await this.previewDirectory(templateId);
+      await rm(dir, { recursive: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
+  async listPreviewRuns(): Promise<string[]> {
+    const parent = join(this.root, 'preview-runs');
+    try {
+      await this.ordinary(parent, 'directory');
+      const names = await readdir(parent);
+      for (const name of names) {
+        validateId(name);
+        await this.ordinary(join(parent, name), 'directory');
+      }
+      return names;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  async cleanupPreviewRun(runId: string): Promise<void> {
+    const root = this.previewRun(runId);
+    try {
+      await this.ordinary(dirname(root), 'directory');
+      await this.ordinary(root, 'directory');
+      await rm(root, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 
   async jobInputExists(jobId: string): Promise<boolean> {
@@ -325,7 +528,11 @@ export class FileSystemStorage extends Storage {
     }
   }
 
-  async stageResource(jobId: string, storedName: string, temporaryPath: string): Promise<void> {
+  async stageResource(
+    jobId: string,
+    storedName: string,
+    temporaryPath: string,
+  ): Promise<void> {
     await this.locked(`resource:${jobId}`, async () => {
       await this.stagedFile(temporaryPath);
       try {
@@ -356,7 +563,9 @@ export class FileSystemStorage extends Storage {
     });
   }
 
-  async prepareJobOutput(jobId: string): Promise<{ input: string; output: string }> {
+  async prepareJobOutput(
+    jobId: string,
+  ): Promise<{ input: string; output: string }> {
     const root = this.job(jobId);
     await this.ordinary(root, 'directory');
     const input = join(root, 'input');
@@ -370,9 +579,16 @@ export class FileSystemStorage extends Storage {
     await rm(this.pdf(jobId), { recursive: true, force: true });
   }
 
-  async savePdf(jobId: string, source: string, filename: string): Promise<string> {
+  async savePdf(
+    jobId: string,
+    source: string,
+    filename: string,
+  ): Promise<string> {
     validateId(jobId);
-    if (!filename.endsWith('.pdf') || filename !== `${validateId(filename.slice(0, -4))}.pdf`)
+    if (
+      !filename.endsWith('.pdf') ||
+      filename !== `${validateId(filename.slice(0, -4))}.pdf`
+    )
       throw new Error('Invalid PDF filename');
     const output = join(this.job(jobId), 'output');
     const resolved = resolve(source);
@@ -389,7 +605,10 @@ export class FileSystemStorage extends Storage {
 
   async openPdf(jobId: string, filename: string): Promise<Readable> {
     validateId(jobId);
-    if (!filename.endsWith('.pdf') || filename !== `${validateId(filename.slice(0, -4))}.pdf`)
+    if (
+      !filename.endsWith('.pdf') ||
+      filename !== `${validateId(filename.slice(0, -4))}.pdf`
+    )
       throw new Error('Invalid PDF filename');
     const path = join(this.pdf(jobId), filename);
     await this.ordinary(this.pdf(jobId), 'directory');

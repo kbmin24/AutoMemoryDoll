@@ -1,3 +1,4 @@
+import { addTemplateTransactions } from './helpers/template-transactions.js';
 import sharp from 'sharp';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -64,7 +65,7 @@ function dbForTests() {
       }),
     },
   };
-  return db;
+  return addTemplateTransactions(db);
 }
 
 vi.mock('../src/auth/auth.middleware.js', () => ({
@@ -118,9 +119,24 @@ describe('template and workspace routes', () => {
     expect(created.status).toBe(201);
     expect(created.body.template.manifest).toEqual(manifest);
     const id = created.body.template.id;
-    expect(
-      await readFile(join(root, 'templates', id, 'template.tex'), 'utf8'),
-    ).toBe('');
+    expect(await readFile(join(root, 'templates', id, 'template.tex'), 'utf8'))
+      .toBe(String.raw`\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{Enter title here}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+
+\end{document}
+`);
     expect(
       (await request(app).get('/api/templates')).body.templates,
     ).toHaveLength(1);
@@ -410,4 +426,79 @@ it('rejects fake image content and reports binary text reads as a controlled 400
     .query({ segments: 'binary.png' });
   expect(response.status).toBe(400);
   expect(response.body).toEqual({ error: 'Invalid workspace operation' });
+});
+
+it('serves a generated template thumbnail only to its owner with private headers', async () => {
+  const id = (
+    await request(app)
+      .post('/api/templates')
+      .send({ name: 'Private', manifest })
+  ).body.template.id;
+  const runId = randomUUID();
+  await storage.snapshotPreview(id, runId);
+  const { output } = await storage.preparePreviewOutput(runId);
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(
+    join(output, 'preview.webp'),
+    Buffer.from('RIFF1234WEBPimage'),
+  );
+  await storage.publishPreview(id, runId);
+  const response = await request(app).get(`/api/templates/${id}/preview`);
+  expect(response.status).toBe(200);
+  expect(response.headers['content-type']).toContain('image/webp');
+  expect(response.headers['cache-control']).toBe('private, no-store');
+  expect(
+    (
+      await request(app)
+        .get(`/api/templates/${id}/preview`)
+        .set('X-Test-User', otherId)
+    ).status,
+  ).toBe(404);
+  expect(
+    (await request(app).get(`/api/templates/${id}/preview?path=secret`)).status,
+  ).toBe(400);
+  await request(app).delete(`/api/templates/${id}`);
+  expect((await request(app).get(`/api/templates/${id}/preview`)).status).toBe(
+    404,
+  );
+  expect(await storage.templatePreviewExists(id)).toBe(false);
+});
+
+it('schedules previews after saved content/shape changes but not names, failed edits or reads', async () => {
+  const previews = {
+    schedule: vi.fn(async () => {}),
+    scheduleIfIdle: vi.fn(async () => {}),
+  };
+  app = createApp(
+    dbForTests(),
+    { jwtSecret: 'test-secret-at-least-32-characters-long', cookieHours: 12 },
+    storage,
+    undefined,
+    undefined,
+    [],
+    previews,
+  );
+  const id = (
+    await request(app)
+      .post('/api/templates')
+      .send({ name: 'Private', manifest })
+  ).body.template.id;
+  expect(previews.schedule).toHaveBeenCalledTimes(1);
+  await request(app).patch(`/api/templates/${id}`).send({ name: 'Renamed' });
+  await request(app).patch(`/api/templates/${id}`).send({ manifest });
+  await request(app).get(`/api/templates/${id}/files`);
+  await request(app)
+    .put(`/api/templates/${id}/files/text`)
+    .send({ segments: ['../bad'], text: 'no' });
+  expect(previews.schedule).toHaveBeenCalledTimes(1);
+  await request(app)
+    .patch(`/api/templates/${id}`)
+    .send({ manifest: { version: 1, shape: null } });
+  expect(previews.schedule).toHaveBeenCalledTimes(2);
+  previews.schedule.mockRejectedValueOnce(new Error('queue offline'));
+  const response = await request(app)
+    .put(`/api/templates/${id}/files/text`)
+    .send({ segments: ['template.tex'], text: 'saved' });
+  expect(response.status).toBe(204);
+  expect(await storage.readText(id, ['template.tex'])).toBe('saved');
 });

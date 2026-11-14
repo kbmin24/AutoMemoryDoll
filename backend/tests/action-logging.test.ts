@@ -1,3 +1,4 @@
+import { addTemplateTransactions } from './helpers/template-transactions.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ async function fixture(level = 'debug') {
     deletedAt: null,
     manifest: { version: 1, shape: null },
   };
-  const db: any = {
+  const db: any = addTemplateTransactions({
     user: {
       findUnique: vi.fn(async ({ where }: any) =>
         where.id === user.id || where.username === user.username ? user : null,
@@ -58,7 +59,7 @@ async function fixture(level = 'debug') {
         status: 'queued',
       })),
     },
-  };
+  });
   await storage.createTemplateRoot(template.id);
   await storage.writeText(template.id, ['template.tex'], 'SECRET document');
   const { logger, events } = captureLogs(level);

@@ -1,3 +1,4 @@
+import { PreviewProcessor } from './previews.worker.js';
 import { closeLogger, runService, safeError } from '../logging/logger.js';
 import { loadEnvironment } from '../env.js';
 import { Queue, Worker } from 'bullmq';
@@ -22,9 +23,11 @@ await runService('consumer', async (logger) => {
   const queue = new Queue(queueName, { connection });
   queue.on('error', (error) => logger.error('queue.error', safeError(error)));
   const generator = new ContainerPdfGenerator(config, undefined, logger);
+  const storage = new FileSystemStorage(config.storageRoot);
+  const previews = new PreviewProcessor(db, storage, generator, logger);
   const processor = new JobProcessor(
     db,
-    new FileSystemStorage(config.storageRoot),
+    storage,
     generator,
     config.wallTimeMs,
     logger,
@@ -44,18 +47,28 @@ await runService('consumer', async (logger) => {
     return reconciliation;
   }
   await reconcile();
+  await previews.reconcile();
   const worker = new Worker(
     queueName,
     async (job) => {
       if (
         !job.data ||
         typeof job.data !== 'object' ||
-        Object.keys(job.data).length !== 1 ||
-        typeof job.data.jobId !== 'string'
+        Array.isArray(job.data) ||
+        Object.keys(job.data).length !== 1
       ) {
         throw new Error('Invalid queue payload');
       }
-      await processor.processJob(validateId(job.data.jobId));
+      if (
+        job.name === 'template-preview' &&
+        typeof job.data.templateId === 'string'
+      ) {
+        await previews.processTemplate(validateId(job.data.templateId));
+      } else if (job.name === queueName && typeof job.data.jobId === 'string') {
+        await processor.processJob(validateId(job.data.jobId));
+      } else {
+        throw new Error('Invalid queue payload');
+      }
     },
     { connection, concurrency: 1, maxStalledCount: 0 },
   );

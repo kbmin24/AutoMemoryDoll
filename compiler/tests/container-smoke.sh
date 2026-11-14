@@ -38,6 +38,7 @@ trap 'cleanup' EXIT HUP INT TERM
 
 run_job() {
   case_name=$1
+  preview=${2:-}
   case_dir="$work/$case_name"
   mkdir -p "$case_dir/input" "$case_dir/output" "$case_dir/scratch"
   cp -R "$fixtures/$case_name/." "$case_dir/input/"
@@ -47,7 +48,7 @@ run_job() {
   if [ "$mode" = local ]; then
     TECTONIC_BUNDLE_PATH="$TECTONIC_TEST_BUNDLE" \
       TECTONIC_SCRATCH_DIR="$case_dir/scratch" \
-      "$COMPILER_BIN" "$case_dir/input" "$case_dir/output"
+      "$COMPILER_BIN" "$case_dir/input" "$case_dir/output" ${preview:+--preview}
   else
     input_volume=$(docker volume create)
     volumes="$volumes $input_volume"
@@ -71,7 +72,7 @@ run_job() {
       --mount "type=volume,source=$input_volume,target=/input,readonly" \
       --mount "type=volume,source=$output_volume,target=/output" \
       --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
-      "$image"; then
+      "$image" ${preview:+/input} ${preview:+/output} ${preview:+--preview}; then
       job_status=0
     else
       job_status=$?
@@ -106,5 +107,12 @@ for case_name in non-object invalid-tex; do
     exit 1
   fi
 done
+
+run_job preview yes
+preview_output="$work/preview/output"
+jq -e '.result == "ok" and .filename == "preview.webp"' "$preview_output/result.json" >/dev/null
+test -s "$preview_output/preview.webp"
+test "$(find "$preview_output" -name '*.webp' | wc -l)" -eq 1
+test "$(find "$preview_output" -name '*.pdf' | wc -l)" -eq 0
 
 echo "smoke test passed ($mode)"

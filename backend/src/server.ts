@@ -26,6 +26,7 @@ await runService('api', async (logger, loggingConfig) => {
     jobQueue.publisher,
     logger,
     loggingConfig.trustedProxies,
+    jobQueue.publisher,
   );
   const server = app.listen(config.port);
   await new Promise<void>((resolve, reject) => {
@@ -36,7 +37,12 @@ await runService('api', async (logger, loggingConfig) => {
   logger.info('service.ready', { port: config.port });
   let reconciliation: Promise<void> | undefined;
   const reconcile = () => {
-    reconciliation ??= reconcileQueuedJobs(db, storage, jobQueue.publisher, logger)
+    reconciliation ??= reconcileQueuedJobs(
+      db,
+      storage,
+      jobQueue.publisher,
+      logger,
+    )
       .catch((error) => {
         logger.error('queue.reconciliation_failed', safeError(error));
       })

@@ -1,3 +1,4 @@
+import { withTemplateLock } from './template-lock.js';
 import { TemplateError } from './templates.errors.js';
 import { randomUUID } from 'node:crypto';
 import type { ManifestV1 } from '../contracts.js';
@@ -14,6 +15,24 @@ import {
 
 export { TemplateError } from './templates.errors.js';
 
+const defaultTemplate = String.raw`\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{Enter title here}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+
+\end{document}
+`;
+
 function validName(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) {
     throw new TemplateError('Invalid template name');
@@ -21,7 +40,11 @@ function validName(value: unknown): string {
   return value.trim();
 }
 
-export function templateDto(template: { id: string; name: string; manifest: unknown }) {
+export function templateDto(template: {
+  id: string;
+  name: string;
+  manifest: unknown;
+}) {
   return {
     id: template.id,
     name: template.name,
@@ -33,7 +56,11 @@ export async function listTemplates(db: Database, userId: string) {
   return (await listOwnedTemplates(db, userId)).map(templateDto);
 }
 
-export async function getTemplate(db: Database, userId: string, templateId: string) {
+export async function getTemplate(
+  db: Pick<Database, 'template'>,
+  userId: string,
+  templateId: string,
+) {
   try {
     validateId(templateId);
   } catch {
@@ -53,10 +80,16 @@ export async function createTemplate(
 ) {
   const id = randomUUID();
   const validManifest = validateManifest(manifest);
-  const template = await insertTemplate(db, id, userId, validName(name), validManifest);
+  const template = await insertTemplate(
+    db,
+    id,
+    userId,
+    validName(name),
+    validManifest,
+  );
   try {
     await storage.createTemplateRoot(id);
-    await storage.writeText(id, ['template.tex'], '');
+    await storage.writeText(id, ['template.tex'], defaultTemplate);
   } catch (error) {
     await db.template.delete({ where: { id } });
     await storage.removeTemplateRoot(id).catch(() => undefined);
@@ -67,18 +100,40 @@ export async function createTemplate(
 
 export async function updateTemplate(
   db: Database,
+  storage: Storage,
   userId: string,
   templateId: string,
   patch: { name?: unknown; manifest?: unknown },
+  onShapeChanged?: () => void,
 ) {
-  await getTemplate(db, userId, templateId);
   const changes: { name?: string; manifest?: ManifestV1 } = {};
   if (patch.name !== undefined) changes.name = validName(patch.name);
-  if (patch.manifest !== undefined) changes.manifest = validateManifest(patch.manifest);
-  if (!Object.keys(changes).length) throw new TemplateError('Empty template update');
-  const updated = await updateOwnedTemplate(db, userId, templateId, changes);
-  if (!updated.count) throw new TemplateError('Template not found', 404);
-  return templateDto(await getTemplate(db, userId, templateId));
+  if (patch.manifest !== undefined)
+    changes.manifest = validateManifest(patch.manifest);
+  if (!Object.keys(changes).length)
+    throw new TemplateError('Empty template update');
+  return withTemplateLock(
+    db,
+    storage,
+    templateId,
+    userId,
+    async (tx, existing) => {
+      const shapeChanged =
+        changes.manifest !== undefined &&
+        JSON.stringify(existing.manifest.shape) !==
+          JSON.stringify(changes.manifest.shape);
+      const updated = await updateOwnedTemplate(
+        tx,
+        userId,
+        templateId,
+        changes,
+      );
+      if (!updated.count) throw new TemplateError('Template not found', 404);
+      const result = templateDto(await getTemplate(tx, userId, templateId));
+      if (shapeChanged) onShapeChanged?.();
+      return result;
+    },
+  );
 }
 
 export async function softDeleteTemplate(
@@ -87,19 +142,26 @@ export async function softDeleteTemplate(
   userId: string,
   templateId: string,
 ) {
-  await getTemplate(db, userId, templateId);
   const deletedAt = new Date();
-  const updated = await updateOwnedTemplate(db, userId, templateId, {
-    deletedAt,
-  });
-  if (!updated.count) throw new TemplateError('Template not found', 404);
-  try {
-    await storage.removeTemplateRoot(templateId);
-  } catch (error) {
-    await db.template.updateMany({
-      where: { id: templateId, ownedBy: userId, deletedAt },
-      data: { deletedAt: null },
-    });
-    throw error;
-  }
+  await withTemplateLock(
+    db,
+    storage,
+    templateId,
+    userId,
+    async (tx) => {
+      await updateOwnedTemplate(tx, userId, templateId, { deletedAt });
+    },
+    async () => {
+      try {
+        await storage.removeTemplatePreview(templateId);
+        await storage.removeTemplateRoot(templateId);
+      } catch (error) {
+        await db.template.updateMany({
+          where: { id: templateId, ownedBy: userId, deletedAt },
+          data: { deletedAt: null },
+        });
+        throw error;
+      }
+    },
+  );
 }

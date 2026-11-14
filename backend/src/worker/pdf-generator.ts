@@ -7,11 +7,33 @@ export type CompilerResult =
   | { result: 'ok'; filename: string; message: string }
   | { result: 'failed'; filename: null; message: string };
 
+export type PreviewResult =
+  | { result: 'ok'; filename: 'preview.webp'; message: string }
+  | { result: 'failed'; filename: null; message: string };
+
 export abstract class PdfGenerator {
-  abstract generate(inputDir: string, outputDir: string): Promise<CompilerResult>;
+  abstract generate(
+    inputDir: string,
+    outputDir: string,
+  ): Promise<CompilerResult>;
+  abstract generatePreview(
+    inputDir: string,
+    outputDir: string,
+  ): Promise<PreviewResult>;
   abstract stop(jobId: string): Promise<void>;
 
-  protected async readResult(outputDir: string): Promise<CompilerResult> {
+  protected readResult(
+    outputDir: string,
+    preview?: false,
+  ): Promise<CompilerResult>;
+  protected readResult(
+    outputDir: string,
+    preview: true,
+  ): Promise<PreviewResult>;
+  protected async readResult(
+    outputDir: string,
+    preview = false,
+  ): Promise<CompilerResult | PreviewResult> {
     const file = await open(
       join(outputDir, 'result.json'),
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -26,9 +48,19 @@ export abstract class PdfGenerator {
         throw new Error('Invalid compiler manifest');
       }
       const result = value as Record<string, unknown>;
-      if (typeof result.message !== 'string') throw new Error('Invalid compiler message');
+      if (typeof result.message !== 'string')
+        throw new Error('Invalid compiler message');
       if (result.result === 'failed' && result.filename === null) {
         return { result: 'failed', filename: null, message: result.message };
+      }
+      if (preview) {
+        if (result.result !== 'ok' || result.filename !== 'preview.webp')
+          throw new Error('Invalid preview manifest');
+        return {
+          result: 'ok',
+          filename: 'preview.webp',
+          message: result.message,
+        };
       }
       if (
         result.result !== 'ok' ||

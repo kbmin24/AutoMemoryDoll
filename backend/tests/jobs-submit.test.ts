@@ -1,3 +1,4 @@
+import { addTemplateTransactions } from './helpers/template-transactions.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,10 @@ import {
   submitGeneration,
   validateGenerationData,
 } from '../src/jobs/jobs.service.js';
-import { findResourceAliases, rewriteResourceTokens } from '../src/jobs/resource-tokens.js';
+import {
+  findResourceAliases,
+  rewriteResourceTokens,
+} from '../src/jobs/resource-tokens.js';
 import { BullMqPublisher } from '../src/jobs/queue.js';
 import type { ManifestV1 } from '../src/contracts.js';
 
@@ -43,7 +47,9 @@ describe('generation data validation', () => {
   });
 
   it('omits an unset optional boolean represented by null', () => {
-    expect(validateGenerationData(shaped, { title: 'Report', approved: null })).toEqual({
+    expect(
+      validateGenerationData(shaped, { title: 'Report', approved: null }),
+    ).toEqual({
       title: 'Report',
     });
   });
@@ -62,7 +68,9 @@ describe('generation data validation', () => {
 
   it('accepts only a top-level object in JSON mode', () => {
     const jsonMode: ManifestV1 = { version: 1, shape: null };
-    expect(validateGenerationData(jsonMode, { nested: [1, null, true] })).toEqual({
+    expect(
+      validateGenerationData(jsonMode, { nested: [1, null, true] }),
+    ).toEqual({
       nested: [1, null, true],
     });
     expect(() => validateGenerationData(jsonMode, [1, 2])).toThrow();
@@ -72,7 +80,10 @@ describe('generation data validation', () => {
 
 describe('resource tokens', () => {
   it('finds unique aliases across text files and rewrites only supplied text', () => {
-    const files = ['A @resource(logo) and @resource(chart_2)', 'Again @resource(logo)'];
+    const files = [
+      'A @resource(logo) and @resource(chart_2)',
+      'Again @resource(logo)',
+    ];
     expect(findResourceAliases(files)).toEqual(['logo', 'chart_2']);
     expect(
       rewriteResourceTokens(files[0], {
@@ -103,7 +114,9 @@ it('publishes only a stable job ID with one processing attempt', async () => {
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 async function setup(manifest: ManifestV1 = { version: 1, shape: null }) {
@@ -120,7 +133,7 @@ async function setup(manifest: ManifestV1 = { version: 1, shape: null }) {
     deletedAt: null,
   };
   const jobs: any[] = [];
-  const db: any = {
+  const db: any = addTemplateTransactions({
     template: {
       findFirst: vi.fn(async ({ where }: any) =>
         where.id === templateId && where.ownedBy === userId ? template : null,
@@ -137,19 +150,30 @@ async function setup(manifest: ManifestV1 = { version: 1, shape: null }) {
         jobs.push(job);
         return job;
       }),
-      findUnique: vi.fn(async ({ where }: any) => jobs.find((job) => job.id === where.id) ?? null),
-      findMany: vi.fn(async () => jobs.filter((job) => job.status === 'queued')),
+      findUnique: vi.fn(
+        async ({ where }: any) =>
+          jobs.find((job) => job.id === where.id) ?? null,
+      ),
+      findMany: vi.fn(async () =>
+        jobs.filter((job) => job.status === 'queued'),
+      ),
       updateMany: vi.fn(async ({ where, data }: any) => {
-        const job = jobs.find((item) => item.id === where.id && item.status === where.status);
+        const job = jobs.find(
+          (item) => item.id === where.id && item.status === where.status,
+        );
         if (!job) return { count: 0 };
         Object.assign(job, data);
         return { count: 1 };
       }),
     },
-  };
+  });
   const queue = { add: vi.fn(async (_jobId: string) => undefined) };
   await storage.createTemplateRoot(templateId);
-  await storage.writeText(templateId, ['template.tex'], 'Hello @resource(logo) {{ name }}');
+  await storage.writeText(
+    templateId,
+    ['template.tex'],
+    'Hello @resource(logo) {{ name }}',
+  );
   return { root, storage, templateId, userId, jobs, db, queue };
 }
 
@@ -159,18 +183,29 @@ describe('job submission', () => {
     const staging = await context.storage.uploadStagingDirectory();
     const upload = join(staging, randomUUID());
     await writeFile(upload, 'image bytes');
-    const job = await submitGeneration(context.db, context.storage, context.queue, {
-      userId: context.userId,
-      templateId: context.templateId,
-      data: { name: '@resource(logo)' },
-      uploads: [{ alias: 'logo', temporaryPath: upload }],
-    });
+    const job = await submitGeneration(
+      context.db,
+      context.storage,
+      context.queue,
+      {
+        userId: context.userId,
+        templateId: context.templateId,
+        data: { name: '@resource(logo)' },
+        uploads: [{ alias: 'logo', temporaryPath: upload }],
+      },
+    );
 
     expect(context.jobs).toHaveLength(1);
     expect(context.queue.add).toHaveBeenCalledWith(job.id);
-    await context.storage.writeText(context.templateId, ['template.tex'], 'Changed');
+    await context.storage.writeText(
+      context.templateId,
+      ['template.tex'],
+      'Changed',
+    );
     const input = join(context.root, 'jobs', job.id, 'input');
-    expect(await readFile(join(input, 'data.json'), 'utf8')).toBe('{"name":"@resource(logo)"}');
+    expect(await readFile(join(input, 'data.json'), 'utf8')).toBe(
+      '{"name":"@resource(logo)"}',
+    );
     const tex = await readFile(join(input, 'template', 'template.tex'), 'utf8');
     expect(tex).toContain('Hello ../resources/');
     expect(tex).not.toContain('Changed');
@@ -208,7 +243,11 @@ describe('job submission', () => {
   it('finds aliases in a nested text file and rejects an empty main template', async () => {
     const context = await setup();
     await context.storage.createDirectory(context.templateId, ['parts']);
-    await context.storage.writeText(context.templateId, ['template.tex'], 'Main');
+    await context.storage.writeText(
+      context.templateId,
+      ['template.tex'],
+      'Main',
+    );
     await context.storage.writeText(
       context.templateId,
       ['parts', 'figure.tex'],
@@ -223,7 +262,11 @@ describe('job submission', () => {
       }),
     ).rejects.toThrow();
     expect(context.jobs).toHaveLength(0);
-    await context.storage.writeText(context.templateId, ['template.tex'], '   ');
+    await context.storage.writeText(
+      context.templateId,
+      ['template.tex'],
+      '   ',
+    );
     await expect(
       submitGeneration(context.db, context.storage, context.queue, {
         userId: context.userId,
@@ -236,7 +279,11 @@ describe('job submission', () => {
 
   it('marks a created job failed and cleans its snapshot when enqueue fails', async () => {
     const context = await setup();
-    await context.storage.writeText(context.templateId, ['template.tex'], 'Hello');
+    await context.storage.writeText(
+      context.templateId,
+      ['template.tex'],
+      'Hello',
+    );
     context.queue.add.mockRejectedValueOnce(new Error('redis unavailable'));
     await expect(
       submitGeneration(context.db, context.storage, context.queue, {
@@ -252,7 +299,11 @@ describe('job submission', () => {
 
   it('re-enqueues a queued row left by an API crash using the same job ID', async () => {
     const context = await setup();
-    await context.storage.writeText(context.templateId, ['template.tex'], 'Hello');
+    await context.storage.writeText(
+      context.templateId,
+      ['template.tex'],
+      'Hello',
+    );
     const jobId = randomUUID();
     const input = await context.storage.snapshot(context.templateId, jobId);
     await writeFile(join(input, 'data.json'), '{}');

@@ -39,6 +39,7 @@ pub fn compile_pdf(
         SecurityStance::DisableInsecures,
     ));
     builder
+        .build_date(std::time::SystemTime::now())
         .primary_input_buffer(tex.as_bytes())
         .tex_input_name("template.tex")
         .filesystem_root(template_dir)

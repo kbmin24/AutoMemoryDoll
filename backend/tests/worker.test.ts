@@ -29,6 +29,9 @@ const filename = `${randomUUID()}.pdf`;
 let generate: (input: string, output: string) => Promise<void>;
 let calls: number;
 class FakeGenerator extends PdfGenerator {
+  async generatePreview(): Promise<never> {
+    throw new Error('Not a preview test');
+  }
   async generate(input: string, output: string) {
     calls++;
     await generate(input, output);

@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -51,6 +52,31 @@ it.skipIf(process.env.RUN_COMPILER_INTEGRATION !== '1')(
         join(output, success.filename),
         success.filename,
       );
+      const previewId = randomUUID();
+      const previewInput = await storage.snapshotPreview(templateId, previewId);
+      await writeFile(
+        join(previewInput, 'data.json'),
+        JSON.stringify({ name: 'Loream Ipsum' }),
+      );
+      const preview = await storage.preparePreviewOutput(previewId);
+      const previewResult = await generator.generatePreview(
+        preview.input,
+        preview.output,
+      );
+      expect(previewResult).toMatchObject({
+        result: 'ok',
+        filename: 'preview.webp',
+      });
+      const bytes = await readFile(join(preview.output, 'preview.webp'));
+      const metadata = await sharp(bytes).metadata();
+      expect(metadata.format).toBe('webp');
+      expect(Math.max(metadata.width!, metadata.height!)).toBe(768);
+      expect(
+        (await readdir(preview.output)).filter((name) => name.endsWith('.pdf')),
+      ).toEqual([]);
+      await storage.publishPreview(templateId, previewId);
+      await storage.cleanupPreviewRun(previewId);
+      expect(await storage.templatePreviewExists(templateId)).toBe(true);
       await storage.cleanupJob(goodId);
       expect(await readdir(join(root, 'pdfs', goodId))).toEqual([
         success.filename,

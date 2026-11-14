@@ -69,3 +69,35 @@ sudo sh compiler/tests/container-smoke.sh
 This builds the image, runs a successful job with escaped data, `|safe`, a local class and a relative resource, then checks PDF bytes and the result manifest. It also checks non-object JSON and invalid TeX failures. The script transfers fixtures and results through temporary Docker volumes, so it works when the Docker daemon cannot see the CLI's temporary directory. Each compiler run uses `--network none`, a read-only root and input mount, and writable output and private temp mounts. To repeat under gVisor, set `CONTAINER_RUNTIME=runsc`.
 
 For a local compiler check without Docker, set `SMOKE_MODE=local`, `COMPILER_BIN` to the built executable, and `TECTONIC_TEST_BUNDLE` to a directory containing the extracted full bundle. This checks the job flow but does not verify container isolation.
+
+## Template preview mode
+
+The default invocation still generates a UUID-named PDF. Invoke
+`automemorydoll-compiler /input /output --preview` to compile sample input and
+render only the first page as `preview.webp`. The success manifest names that
+fixed image; failed rendering produces the normal failed manifest and no final
+image. Temporary PDFs and PNGs stay under the private scratch directory.
+
+The runtime image includes Poppler (`pdftoppm`) and `cwebp`. Conversion fits the
+whole page within 768 × 768 pixels without cropping, with a white background and
+WebP quality 80. Compilation and conversion share the container's time/memory
+limits and gVisor boundary. No renderer runs on the host.
+
+Rebuild the image before deploying the updated consumer:
+
+```sh
+docker build -t automemorydoll-compiler:local compiler
+CONTAINER_RUNTIME=runsc IMAGE=automemorydoll-compiler:local sh compiler/tests/container-smoke.sh
+```
+
+For native renderer tests (not a replacement for gVisor verification), install
+`pdftoppm`, `cwebp` and `dwebp`, then run
+`RUN_PREVIEW_RENDERER_TESTS=1 cargo test --manifest-path compiler/Cargo.toml --test preview_contract`.
+Set `TECTONIC_TEST_BUNDLE` to the unpacked approved full bundle to exercise the
+optional offline compilation tests; without it those tests return early.
+
+The compiler explicitly supplies the current system time to Tectonic. This makes
+LaTeX's `\today` (including `\date{\today}`) use the compilation date rather than
+Tectonic's library default of 1 January 1970. An explicitly written date in a
+template still controls its displayed date. The successful smoke fixture checks
+that the TeX year is not stuck at the Unix epoch.

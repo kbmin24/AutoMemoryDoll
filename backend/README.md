@@ -295,3 +295,90 @@ Startup failures include the original error message and stack in the structured
 error record, drain logs, and exit with code 1. When logging cannot initialize,
 a stderr JSON fallback includes these diagnostics. Logging infrastructure failures
 also include error details in their stderr fallback records.
+
+## Automatic template previews
+
+Successful template creation and saved workspace/data-shape changes schedule a
+preview after a 30-second quiet period. New saves replace delayed work; edits
+during a run retain one follow-up. Display-name-only/unchanged-shape updates do
+not schedule work. Preview jobs share `pdf-generation` with ordinary jobs but
+have priority 10; ordinary jobs retain their higher default priority. Keep one
+consumer at concurrency 1. Priority never interrupts a running preview, and
+continuous document demand can delay/starve previews.
+
+Previews compile saved sample values, never user document data: number `1`, text
+`Loream Ipsum`, boolean `true`, and one fixed Lorem Ipsum paragraph for longtext,
+including optional fields. Templates without a shape use `{}`. Required per-job
+resource uploads make the new preview unavailable; no sample files are invented.
+A previous successful image remains visible if generation or conversion fails.
+There are no automatic retries or user-visible preview jobs/history records.
+
+Files live at `<STORAGE_ROOT>/previews/<template UUID>/preview.webp`. Each holds
+only the first page, fitted within 768 × 768 pixels at WebP quality 80. Images
+are replaced atomically, and deleted with their template; user-generated PDFs
+retain their existing lifecycle. Private intermediate runs live under
+`preview-runs/<run UUID>/` and are removed after completion. Consumer startup
+stops leftover preview containers before removing orphan runs, without retrying.
+The API and consumer must share private read/write access to these directories.
+
+`GET /api/templates/:id/preview` requires the template owner's authenticated
+session, including for administrator/owner-role accounts. It serves WebP with
+`Cache-Control: private, no-store`, or 404 when unavailable. Do not publicly map
+the storage directory. Template cards request this endpoint and show the existing
+unavailable placeholder on image errors; reload/re-enter the list to see new
+images. There is no live polling or template DTO change.
+
+Snapshot copies and saves use a shared filesystem `flock` guard plus the same
+PostgreSQL template row lock across API and consumer processes, including
+data-shape reads. Both are released before compilation and queue I/O. The host
+requires util-linux `flock` (the service launcher already uses util-linux
+`setpriv`). Lock files live in private `template-locks/<template UUID>.lock` and
+must not be unlinked while services run; retaining their inodes prevents split
+locks. The file guard remains held until filesystem work settles even if a
+PostgreSQL transaction times out. Publication and destructive deletion occur
+only after transaction completion is confirmed, while that guard remains held. Separate saves are still separate operations; the
+quiet period reduces capture of unfinished edits. Lock wait is bounded at five
+seconds and the operation transaction at sixty seconds; failures are reported
+rather than publishing an unconfirmed snapshot.
+
+### Rollout and one-time backfill
+
+1. Rebuild the existing compiler image with its Poppler/WebP tools; verify the
+   offline runsc smoke tests described in `compiler/README.md`.
+2. Deploy the updated consumer before enabling API preview scheduling. Continue
+   running only one consumer. Then deploy the updated API and frontend.
+3. Ensure shared storage/private service identity permissions and Redis
+   persistence are configured. There is no database migration or availability
+   column. The additional PostgreSQL row locks do not store scheduling state.
+4. Queue missing previews for existing active templates once:
+
+   ```sh
+   npm run previews:backfill -- <service-user>
+   ```
+
+   The root command forwards the username to the backend launcher. It clears
+   supplementary groups; this CLI does not need Docker socket access. Omitting
+   the username runs under the invoking identity, which still needs storage,
+   database and Redis access. It loads the existing backend environment files.
+
+Backfill pages 100 active template IDs at a time, skips existing images and uses
+non-replacing deduplication so pending/active saved-edit jobs stay intact. A
+partial failure exits nonzero; rerun the command to schedule remaining missing
+previews. It does not run automatically on restart.
+
+Scheduling is best effort after a completed save. A Redis outage does not undo
+the saved content, but may miss its preview update until another saved change.
+Pending updates survive only according to Redis persistence. Preview errors do
+not change ordinary document outcomes; failed replacements retain the old image.
+
+Real concurrency suites use isolated test schemas/queue names:
+
+```sh
+TEST_DATABASE_URL=<disposable-postgres-url> npm --workspace backend test -- template-lock-integration.test.ts
+TEST_REDIS_URL=<disposable-redis-url> npm --workspace backend test -- preview-queue-integration.test.ts
+```
+
+They skip explicitly without their service URLs. The existing opt-in
+`RUN_COMPILER_INTEGRATION=1` suite now also verifies container preview mode;
+run it as the non-root consumer identity with the rebuilt image and Docker
+access. Mocked Docker argument tests do not replace this check.

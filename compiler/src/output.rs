@@ -64,14 +64,18 @@ pub fn write_failure(output: &Path, message: &str) -> Result<(), OutputError> {
     fs::create_dir_all(output)?;
     for entry in fs::read_dir(output)? {
         let entry = entry?;
-        if entry.path().extension().is_some_and(|ext| ext == "pdf") {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "pdf" || ext == "webp")
+        {
             fs::remove_file(entry.path())?;
         }
     }
     write_manifest(output, "failed", None, message)
 }
 
-fn write_manifest(
+pub(crate) fn write_manifest(
     output: &Path,
     result: &str,
     filename: Option<&str>,

@@ -143,12 +143,10 @@ describe.skipIf(!baseUrl)('template persistence with PostgreSQL', () => {
       const ownerLogin = await request(app)
         .post('/api/auth/login')
         .send({ username: owner.username, password: 'owner-password-123456' });
-      const strangerLogin = await request(app)
-        .post('/api/auth/login')
-        .send({
-          username: stranger.username,
-          password: 'stranger-password-123456',
-        });
+      const strangerLogin = await request(app).post('/api/auth/login').send({
+        username: stranger.username,
+        password: 'stranger-password-123456',
+      });
       const ownerCookie = ownerLogin.headers['set-cookie'][0];
       const strangerCookie = strangerLogin.headers['set-cookie'][0];
       expect(
@@ -169,7 +167,7 @@ describe.skipIf(!baseUrl)('template persistence with PostgreSQL', () => {
       await expect(
         getTemplate(db, stranger.id, created.id),
       ).rejects.toMatchObject({ status: 404 });
-      const changed = await updateTemplate(db, owner.id, created.id, {
+      const changed = await updateTemplate(db, storage, owner.id, created.id, {
         name: 'Contract',
       });
       expect(changed.name).toBe('Contract');

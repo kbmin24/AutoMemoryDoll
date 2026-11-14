@@ -10,7 +10,8 @@
     "db:generate": "prisma generate --config prisma7.config.ts",
     "db:migrate:dev": "prisma migrate dev --config prisma7.config.ts",
     "db:migrate:deploy": "prisma migrate deploy --config prisma7.config.ts",
-    "worker": "bash scripts/run-service.sh worker"
+    "worker": "bash scripts/run-service.sh worker",
+    "previews:backfill": "bash scripts/run-service.sh preview-backfill"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.5",

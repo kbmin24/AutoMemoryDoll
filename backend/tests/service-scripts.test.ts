@@ -81,6 +81,7 @@ it.each([
 it.each([
   ['dev:backend', 'src/server.ts'],
   ['worker', 'src/worker/main.ts'],
+  ['previews:backfill', 'src/cli/backfill-previews.ts'],
 ])('forwards the username through npm run %s', async (command, entry) => {
   await rm(join(root, 'node'));
   execFileSync(
@@ -91,4 +92,14 @@ it.each([
   const args = (await readFile(capture, 'utf8')).trim().split('\n');
   expect(args).toContain('--reuid=2101');
   expect(args.at(-1)).toBe(entry);
+});
+
+it('runs preview backfill as the service identity without Docker supplementary groups', async () => {
+  execFileSync('bash', [launcher, 'preview-backfill', 'automemorydoll'], {
+    env,
+  });
+  const args = (await readFile(capture, 'utf8')).trim().split('\n');
+  expect(args).toContain('--clear-groups');
+  expect(args).toContain('--reuid=2101');
+  expect(args.at(-1)).toBe('src/cli/backfill-previews.ts');
 });

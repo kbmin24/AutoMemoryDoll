@@ -4,12 +4,13 @@ set -euo pipefail
 case "${1:-}" in
     api) entry=src/server.ts ;;
     worker) entry=src/worker/main.ts ;;
-    *) echo 'Expected service: api or worker.' >&2; exit 2 ;;
+    preview-backfill) entry=src/cli/backfill-previews.ts ;;
+    *) echo 'Expected service: api, worker, or preview-backfill.' >&2; exit 2 ;;
 esac
 service=$1
 shift
 if (( $# > 1 )); then
-    echo 'Usage: run-service.sh api|worker [username]' >&2
+    echo 'Usage: run-service.sh api|worker|preview-backfill [username]' >&2
     exit 2
 fi
 

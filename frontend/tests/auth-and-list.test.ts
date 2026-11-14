@@ -119,6 +119,7 @@ describe('authentication and private templates', () => {
     await open();
     expect(wrapper!.text()).toContain('Private letter');
     expect(wrapper!.findAll('.template-card')).toHaveLength(1);
+    await wrapper!.get('.template-card img').trigger('error');
     expect(wrapper!.get('.template-card').text()).toContain(
       'Preview unavailable',
     );
@@ -162,7 +163,9 @@ describe('authentication and private templates', () => {
     await accountButton().trigger('click');
     expect(accountButton().attributes('aria-expanded')).toBe('true');
     expect(accountButton().attributes('aria-label')).toBe('Account menu');
-    expect(accountButton().find('.fa-solid.fa-circle-user').exists()).toBe(true);
+    expect(accountButton().find('.fa-solid.fa-circle-user').exists()).toBe(
+      true,
+    );
     expect(accountButton().text()).toBe('');
     expect(wrapper!.get('#account-menu > :first-child').text()).toBe('reader');
     expect(

@@ -315,3 +315,44 @@ it('preserves a reported compilation failure when the compiler exits nonzero', a
     result,
   );
 });
+
+it('uses explicit preview mode and rejects a PDF manifest for a preview', async () => {
+  const id = randomUUID();
+  const input = join(root, 'preview-runs', id, 'input');
+  const output = join(root, 'preview-runs', id, 'output');
+  await mkdir(input, { recursive: true });
+  await mkdir(output);
+  const execute = vi.fn(async (_args: string[]) => ({ code: 0, stderr: '' }));
+  const generator = new ContainerPdfGenerator(
+    {
+      uid: 2101,
+      gid: 2102,
+      image: 'compiler:test',
+      cpus: 1,
+      memoryMb: 512,
+      pids: 64,
+      wallTimeMs: 1000,
+    },
+    execute,
+  );
+  await writeFile(
+    join(output, 'result.json'),
+    JSON.stringify({ result: 'ok', filename: 'preview.webp', message: 'ok' }),
+  );
+  expect((await generator.generatePreview(input, output)).result).toBe('ok');
+  expect(execute.mock.calls[0][0].slice(-4)).toEqual([
+    'compiler:test',
+    '/input',
+    '/output',
+    '--preview',
+  ]);
+  await writeFile(
+    join(output, 'result.json'),
+    JSON.stringify({
+      result: 'ok',
+      filename: `${randomUUID()}.pdf`,
+      message: 'ok',
+    }),
+  );
+  await expect(generator.generatePreview(input, output)).rejects.toThrow();
+});

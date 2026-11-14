@@ -1,3 +1,9 @@
+import { withTemplateLock } from './template-lock.js';
+import {
+  schedulePreviewAfterSave,
+  type PreviewScheduler,
+} from './template-preview.js';
+import { silentLogger, type Logger } from '../logging/logger.js';
 import {
   beginAction,
   markActionSuccess,
@@ -39,6 +45,8 @@ export function workspaceRoutes(
   db: Database,
   config: AuthConfig,
   storage: FileSystemStorage,
+  previews?: PreviewScheduler,
+  logger: Logger = silentLogger,
 ) {
   const router = Router({ mergeParams: true });
   const upload = createUploadMiddleware(storage);
@@ -76,9 +84,22 @@ export function workspaceRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await storage.createDirectory(
+      await withTemplateLock(
+        db,
+        storage,
         String(request.params.id),
-        segments(request.body.segments),
+        (request as AuthRequest).currentUser!.id,
+        async () => {
+          await storage.createDirectory(
+            String(request.params.id),
+            segments(request.body.segments),
+          );
+        },
+      );
+      await schedulePreviewAfterSave(
+        previews,
+        String(request.params.id),
+        logger,
       );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(201).end();
@@ -105,10 +126,23 @@ export function workspaceRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await storage.writeText(
+      await withTemplateLock(
+        db,
+        storage,
         String(request.params.id),
-        segments(request.body.segments),
-        request.body.text,
+        (request as AuthRequest).currentUser!.id,
+        async () => {
+          await storage.writeText(
+            String(request.params.id),
+            segments(request.body.segments),
+            request.body.text,
+          );
+        },
+      );
+      await schedulePreviewAfterSave(
+        previews,
+        String(request.params.id),
+        logger,
       );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
@@ -136,10 +170,24 @@ export function workspaceRoutes(
         } catch {
           throw new TemplateError('Invalid path');
         }
-        await storage.moveUpload(
+        const uploadPath = request.file.path;
+        await withTemplateLock(
+          db,
+          storage,
           String(request.params.id),
-          segments(parsed),
-          request.file.path,
+          (request as AuthRequest).currentUser!.id,
+          async () => {
+            await storage.moveUpload(
+              String(request.params.id),
+              segments(parsed),
+              uploadPath,
+            );
+          },
+        );
+        await schedulePreviewAfterSave(
+          previews,
+          String(request.params.id),
+          logger,
         );
         markActionSuccess(response, { templateId: String(request.params.id) });
         response.status(201).end();
@@ -206,10 +254,23 @@ export function workspaceRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await storage.move(
+      await withTemplateLock(
+        db,
+        storage,
         String(request.params.id),
-        segments(request.body.from),
-        segments(request.body.to),
+        (request as AuthRequest).currentUser!.id,
+        async () => {
+          await storage.move(
+            String(request.params.id),
+            segments(request.body.from),
+            segments(request.body.to),
+          );
+        },
+      );
+      await schedulePreviewAfterSave(
+        previews,
+        String(request.params.id),
+        logger,
       );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
@@ -224,9 +285,22 @@ export function workspaceRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await storage.delete(
+      await withTemplateLock(
+        db,
+        storage,
         String(request.params.id),
-        segments(request.body.segments),
+        (request as AuthRequest).currentUser!.id,
+        async () => {
+          await storage.delete(
+            String(request.params.id),
+            segments(request.body.segments),
+          );
+        },
+      );
+      await schedulePreviewAfterSave(
+        previews,
+        String(request.params.id),
+        logger,
       );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();

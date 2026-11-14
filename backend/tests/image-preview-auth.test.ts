@@ -27,6 +27,20 @@ it('requires authentication before discovering template resource aliases', async
     { jwtSecret: 'test-secret-at-least-32-characters-long', cookieHours: 12 },
     storage,
   );
-  await request(app).get(`/api/templates/${randomUUID()}/resources`).expect(401);
+  await request(app)
+    .get(`/api/templates/${randomUUID()}/resources`)
+    .expect(401);
   expect(list).not.toHaveBeenCalled();
+});
+
+it('requires authentication before reading generated template thumbnails', async () => {
+  const storage = new FileSystemStorage('/unused');
+  const read = vi.spyOn(storage, 'openTemplatePreview');
+  const app = createApp(
+    {} as Parameters<typeof createApp>[0],
+    { jwtSecret: 'test-secret-at-least-32-characters-long', cookieHours: 12 },
+    storage,
+  );
+  await request(app).get(`/api/templates/${randomUUID()}/preview`).expect(401);
+  expect(read).not.toHaveBeenCalled();
 });

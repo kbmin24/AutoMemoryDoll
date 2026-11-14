@@ -1,5 +1,10 @@
 \documentclass{local}
 \begin{document}
+\ifnum\year<2020
+\errmessage{Compiler date is stuck at the Unix epoch}
+\fi
+\date{\today}
+\today
 {{ name }}
 {{ raw | safe }}
 \input{../resources/fragment.tex}

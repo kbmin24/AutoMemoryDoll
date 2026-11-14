@@ -135,6 +135,8 @@ The owner approved the [MVP application design](docs/superpowers/specs/2026-10-2
 
 ### Services and flow
 
+- On 2026-11-14, the owner selected a default `template.tex` for newly created templates: a 12pt A4 article loading `inputenc` (UTF-8), `amsmath`, and `graphicx`, with title `Enter title here`, author `Your Name`, today’s date, and `\maketitle` in the document body.
+
 - The frontend uses Vue.js and polls for generation status.
 - The backend API uses Express on Node.js with TypeScript.
 - The backend enqueues generation jobs in Redis using BullMQ. A separate Node.js/TypeScript queue consumer service, housed under `backend/`, consumes jobs and eventually launches compiler containers. The consumer is not part of the first compiler-container milestone.
@@ -226,6 +228,104 @@ Include actor/target IDs, request/job correlation, and client IP for HTTP/authen
 On 2026-11-09, the owner changed the proxy policy: trust `127.0.0.1` and `::1`
 (the loopback addresses used by localhost) by default. `TRUSTED_PROXY_CIDRS`
 replaces these defaults when provided. This supersedes the earlier no-proxy default.
+
+### Template previews: approved design from 2026-11-14
+
+On 2026-11-14, the owner selected documents generated from sample data as the
+source of template previews, rather than documents generated from users' job data.
+For templates with a defined data shape, use these sample values:
+
+- `number`: `1`.
+- `text`: `Loream Ipsum` (owner-provided spelling).
+- `longtext`: the fixed Lorem Ipsum paragraph in the approved preview design.
+- `boolean`: `true`.
+
+Templates without a data shape automatically attempt preview generation with an
+empty JSON object (`{}`); no author-supplied sample JSON is required.
+
+The owner selected automatic preview generation after saves, with a delay to
+combine successive edits. Preview jobs have lower queue priority than
+user-requested PDF jobs. Schedule generation 30 seconds after the last saved file
+or data-shape change. File uploads, moves, renames, and deletions also restart the
+timer; changing only the template display name does not trigger generation.
+On rollout, run a one-time background backfill for existing active templates
+through the same low-priority preview queue.
+
+The owner selected retaining the last successful preview after edits, while a
+replacement is pending, and if replacement generation fails. A template with no
+successful preview shows an unavailable state. Missing required resources prevent
+a new preview from being generated; they do not remove a retained old preview.
+
+When required per-job resource uploads are missing, the preview is unavailable;
+do not add sample resource uploads for previews. Workspace support files remain
+available through the normal template snapshot.
+
+The owner selected rendering the first PDF page only as a WebP image, fitted
+within 768 × 768 pixels while preserving page proportions without cropping,
+at WebP quality 80. After discussing conversion overhead versus PNG, the owner
+explicitly confirmed retaining WebP and approved the draft design. The owner
+selected adding rendering tools to the existing
+compiler image and performing PDF-to-WebP conversion inside the same isolated
+gVisor container after compilation succeeds. Ordinary document jobs retain
+PDF-only behavior. Preview jobs also render the first page; publish only the
+preview image and discard their temporary PDF. Do not add a separate renderer
+container or perform PDF parsing on the worker host. Use Poppler's `pdftoppm`
+and `cwebp` in an explicit compiler preview mode as described in the approved
+design; runtime behavior remains to be verified during implementation.
+
+The owner selected per-template storage at
+`<STORAGE_ROOT>/previews/<templateId>/preview.webp` (locally
+`data/previews/<templateId>/preview.webp`), with disk-based availability checks
+and atomic replacement only after successful generation. Do not add a database
+column solely to duplicate preview file availability. Keep one successful image
+per template, without preview image history. This supersedes the earlier
+per-job path proposal. The owner selected BullMQ/Redis-only scheduling, without
+database scheduling columns or a migration. Pending updates depend on Redis
+persistence; a save made while Redis is unavailable may miss preview scheduling
+and require another saved change. Use per-template BullMQ deduplication with
+replacement and an active follow-up, as detailed in the approved design; verify
+these semantics against the installed BullMQ version during implementation.
+
+Deleting a template also deletes its preview image. Discard in-progress preview
+results for deleted templates so they cannot restore the image. Existing retained
+user-generated PDFs keep their current lifecycle.
+
+For this milestone, show preview images only in the existing template cards,
+replacing the unavailable placeholder when an image exists. Clicking a card's
+preview opens the template generation form, matching its template-name link.
+Preserve the existing card layout and use a contained image. Keep the template
+DTO unchanged; authenticated image requests determine availability on disk.
+Cards refresh on list reload/re-entry, without live polling or extra status UI.
+
+Automatic preview compilations stay out of user job history; history continues
+to contain user-requested document generation jobs only.
+
+The owner selected reusing the existing BullMQ queue and consumer for internal
+preview jobs, at lower priority than user-requested PDF jobs, rather than adding
+a separate preview queue and worker service. Retain the consumer's current
+single-compilation concurrency. Priority does not interrupt a running preview.
+
+Failed preview attempts have no automatic retry. Retain the previous successful
+image, log the failure, and wait for the next saved change to schedule another
+attempt. Without a previous successful image, keep the unavailable placeholder.
+
+The owner requires consistent preview snapshots: coordinate saved file and
+data-shape mutations with copying across the API and consumer processes. Capture
+the saved manifest, template files, and sample JSON while holding the shared
+per-template lock; release it before compilation. This prevents overlapping
+mutations from producing a mixed snapshot, but does not combine separate saves
+into one transaction. Use a PostgreSQL row lock on the existing template row,
+without database scheduling columns. Implementation review found that database
+timeouts release row locks before filesystem I/O necessarily settles. Retain a
+shared per-template filesystem `flock` guard until all I/O settles, and perform
+publication/destructive source removal only after the database transaction is
+confirmed, while retaining that guard. Lock files live in private
+`template-locks/<templateId>.lock` and are retained to keep their inode stable.
+This is an implementation correction for the approved consistency requirement,
+not additional scheduling state. See the approved
+[template preview design](docs/superpowers/specs/2026-11-14-template-previews-design.md),
+which also settles the sample paragraph, inclusion of optional fields, container
+rendering commands, output size cap, best-effort queue scheduling, and backfill.
 
 ### Remaining project decisions
 

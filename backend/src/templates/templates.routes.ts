@@ -1,7 +1,17 @@
+import {
+  schedulePreviewAfterSave,
+  type PreviewScheduler,
+} from './template-preview.js';
+import { silentLogger, type Logger } from '../logging/logger.js';
+import { pipeline } from 'node:stream/promises';
 import { beginAction, markActionSuccess } from '../logging/http.js';
 import { Router } from 'express';
 import { body, checkExact, param } from 'express-validator';
-import { requireCsrf, requireUser, type AuthRequest } from '../auth/auth.middleware.js';
+import {
+  requireCsrf,
+  requireUser,
+  type AuthRequest,
+} from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
@@ -16,7 +26,10 @@ import {
 } from './templates.service.js';
 import { workspaceRoutes } from './workspace.routes.js';
 import { generationRoutes } from '../jobs/jobs.routes.js';
-import { templateResourceAliases, type QueuePublisher } from '../jobs/jobs.service.js';
+import {
+  templateResourceAliases,
+  type QueuePublisher,
+} from '../jobs/jobs.service.js';
 
 function userId(request: AuthRequest): string {
   return request.currentUser!.id;
@@ -27,6 +40,8 @@ export function templatesRoutes(
   config: AuthConfig,
   storage: FileSystemStorage,
   queue?: QueuePublisher,
+  previews?: PreviewScheduler,
+  logger: Logger = silentLogger,
 ) {
   const router = Router();
   router.use(requireUser(db, config));
@@ -54,17 +69,47 @@ export function templatesRoutes(
         request.body.name,
         request.body.manifest,
       );
+      await schedulePreviewAfterSave(previews, template.id, logger);
       markActionSuccess(response, { templateId: template.id });
       response.status(201).json({ template });
     },
   );
 
   const id = param('id').matches(ACCOUNT_ID_PATTERN);
-  router.get('/:id', id, checkExact(), validateRequest, async (request, response) => {
-    beginAction(response);
-    const template = await getTemplate(db, userId(request), String(request.params.id));
-    response.json({ template: templateDto(template) });
-  });
+  router.get(
+    '/:id/preview',
+    id,
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const templateId = String(request.params.id);
+      await getTemplate(db, userId(request), templateId);
+      const stream = await storage.openTemplatePreview(templateId);
+      response.set({
+        'Content-Type': 'image/webp',
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Cross-Origin-Resource-Policy': 'same-origin',
+      });
+      await pipeline(stream, response);
+    },
+  );
+  router.get(
+    '/:id',
+    id,
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const template = await getTemplate(
+        db,
+        userId(request),
+        String(request.params.id),
+      );
+      response.json({ template: templateDto(template) });
+    },
+  );
 
   router.get(
     '/:id/resources',
@@ -76,7 +121,9 @@ export function templatesRoutes(
       const templateId = String(request.params.id);
       await getTemplate(db, userId(request), templateId);
       response.set('Cache-Control', 'private, no-store');
-      response.json({ aliases: await templateResourceAliases(storage, templateId) });
+      response.json({
+        aliases: await templateResourceAliases(storage, templateId),
+      });
     },
   );
 
@@ -92,12 +139,19 @@ export function templatesRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
+      let shapeChanged = false;
       const template = await updateTemplate(
         db,
+        storage,
         userId(request),
         String(request.params.id),
         request.body,
+        () => {
+          shapeChanged = true;
+        },
       );
+      if (shapeChanged)
+        await schedulePreviewAfterSave(previews, template.id, logger);
       markActionSuccess(response, { templateId: template.id });
       response.json({ template });
     },
@@ -111,13 +165,25 @@ export function templatesRoutes(
     validateRequest,
     async (request, response) => {
       beginAction(response);
-      await softDeleteTemplate(db, storage, userId(request), String(request.params.id));
+      await softDeleteTemplate(
+        db,
+        storage,
+        userId(request),
+        String(request.params.id),
+      );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
     },
   );
 
-  router.use('/:id/files', workspaceRoutes(db, config, storage));
-  if (queue) router.use('/:id/generations', generationRoutes(db, config, storage, queue));
+  router.use(
+    '/:id/files',
+    workspaceRoutes(db, config, storage, previews, logger),
+  );
+  if (queue)
+    router.use(
+      '/:id/generations',
+      generationRoutes(db, config, storage, queue),
+    );
   return router;
 }

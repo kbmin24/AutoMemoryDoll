@@ -34,6 +34,15 @@ const events = new Set([
   'workspace.deleted',
   'workspace.downloaded',
   'pdf.downloaded',
+  'preview.backfill_completed',
+  'preview.scheduled',
+  'preview.scheduling_failed',
+  'preview.started',
+  'preview.succeeded',
+  'preview.rejected',
+  'preview.failed',
+  'preview.cleanup_failed',
+  'preview.interrupted',
   'generation.submitted',
   'generation.started',
   'generation.succeeded',
@@ -135,7 +144,7 @@ function safeFields(info: winston.Logform.TransformableInfo) {
   }
   if (
     typeof info.deliveryId === 'string' &&
-    /^job-[0-9a-f-]{36}$/i.test(info.deliveryId)
+    /^(?:job|preview)-[0-9a-f-]{36}$/i.test(info.deliveryId)
   )
     result.deliveryId = info.deliveryId;
   for (const key of ['status', 'durationMs', 'exitCode', 'port']) {
@@ -178,7 +187,7 @@ function safeFields(info: winston.Logform.TransformableInfo) {
 const lifecycles = new WeakMap<winston.Logger, () => Promise<void>>();
 
 export function createServiceLogger(
-  service: 'api' | 'consumer' | 'owner-cli',
+  service: 'api' | 'consumer' | 'owner-cli' | 'preview-cli',
   config: LoggingConfig,
 ): winston.Logger {
   const logger = winston.createLogger({
@@ -330,7 +339,7 @@ export async function closeLogger(logger: winston.Logger): Promise<void> {
 }
 
 export async function runService(
-  service: 'api' | 'consumer' | 'owner-cli',
+  service: 'api' | 'consumer' | 'owner-cli' | 'preview-cli',
   start: (logger: winston.Logger, config: LoggingConfig) => Promise<void>,
 ): Promise<void> {
   let logger: winston.Logger | undefined;

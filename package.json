@@ -11,7 +11,8 @@
     "worker": "npm --workspace backend run worker --",
     "dev:backend": "npm --workspace backend run start --",
     "dev:frontend": "npm --workspace frontend run dev",
-    "build:frontend": "npm --workspace frontend run build"
+    "build:frontend": "npm --workspace frontend run build",
+    "previews:backfill": "npm --workspace backend run previews:backfill --"
   },
   "engines": {
     "node": ">=24"

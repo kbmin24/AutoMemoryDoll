@@ -1,5 +1,13 @@
+import { addTemplateTransactions } from './helpers/template-transactions.js';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,7 +41,11 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'amd-jobs-routes-'));
   storage = new FileSystemStorage(root);
   await storage.createTemplateRoot(templateId);
-  await storage.writeText(templateId, ['template.tex'], 'Hello @resource(logo)');
+  await storage.writeText(
+    templateId,
+    ['template.tex'],
+    'Hello @resource(logo)',
+  );
   jobs = [];
   queue = { add: vi.fn(async (_jobId: string) => undefined) };
   const template = {
@@ -43,7 +55,7 @@ beforeEach(async () => {
     deletedAt: null,
     manifest: { version: 1, shape: null },
   };
-  const db: any = {
+  const db: any = addTemplateTransactions({
     template: {
       findFirst: vi.fn(async ({ where }: any) =>
         where.id === templateId && where.ownedBy === ownerId ? template : null,
@@ -60,13 +72,17 @@ beforeEach(async () => {
         jobs.push(job);
         return job;
       }),
-      findMany: vi.fn(async ({ where }: any) => jobs.filter((job) => job.userId === where.userId)),
+      findMany: vi.fn(async ({ where }: any) =>
+        jobs.filter((job) => job.userId === where.userId),
+      ),
       findFirst: vi.fn(
         async ({ where }: any) =>
-          jobs.find((job) => job.id === where.id && job.userId === where.userId) ?? null,
+          jobs.find(
+            (job) => job.id === where.id && job.userId === where.userId,
+          ) ?? null,
       ),
     },
-  };
+  });
   app = createApp(
     db,
     { jwtSecret: 'test-secret-at-least-32-characters-long', cookieHours: 12 },
@@ -117,7 +133,6 @@ describe('generation routes', () => {
       .expect(400);
   });
 
-
   it('accepts multipart data and an upload keyed by alias', async () => {
     const response = await request(app)
       .post(`/api/templates/${templateId}/generations`)
@@ -126,12 +141,15 @@ describe('generation routes', () => {
     expect(response.status).toBe(201);
     const jobId = response.body.job.id;
     expect(queue.add).toHaveBeenCalledWith(jobId);
-    expect(await readFile(join(root, 'jobs', jobId, 'input', 'data.json'), 'utf8')).toBe('{}');
+    expect(
+      await readFile(join(root, 'jobs', jobId, 'input', 'data.json'), 'utf8'),
+    ).toBe('{}');
     expect((await request(app).get(`/api/jobs/${jobId}`)).status).toBe(200);
     expect((await request(app).get('/api/jobs')).body.jobs).toHaveLength(1);
-    expect((await request(app).get(`/api/jobs/${jobId}`).set('X-Test-User', otherId)).status).toBe(
-      404,
-    );
+    expect(
+      (await request(app).get(`/api/jobs/${jobId}`).set('X-Test-User', otherId))
+        .status,
+    ).toBe(404);
   });
 
   it('rejects another user with the same not-found response', async () => {
@@ -159,7 +177,11 @@ describe('generation routes', () => {
   });
 
   it('reports a malformed resource alias as a generation request error', async () => {
-    await storage.writeText(templateId, ['template.tex'], '@resource(../secret)');
+    await storage.writeText(
+      templateId,
+      ['template.tex'],
+      '@resource(../secret)',
+    );
     const response = await request(app)
       .post(`/api/templates/${templateId}/generations`)
       .send({ data: {} });
@@ -212,7 +234,9 @@ it('streams only a successful owned PDF, including after template deletion', asy
   expect(own.headers['content-type']).toContain('application/pdf');
   expect(own.headers['content-disposition']).toContain('attachment');
   expect(own.body.toString()).toContain('%PDF-');
-  const foreign = await request(app).get(`/api/jobs/${jobId}/pdf`).set('X-Test-User', otherId);
+  const foreign = await request(app)
+    .get(`/api/jobs/${jobId}/pdf`)
+    .set('X-Test-User', otherId);
   const missing = await request(app).get(`/api/jobs/${randomUUID()}/pdf`);
   expect(foreign.status).toBe(404);
   expect(foreign.body).toEqual(missing.body);
