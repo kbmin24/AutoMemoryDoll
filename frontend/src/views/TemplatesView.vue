@@ -80,13 +80,13 @@ async function remove() {
         class="template-card card min-w-0 overflow-hidden border border-outline bg-white"
       >
         <RouterLink
-          class="grid h-[255px] place-items-center bg-base-300 p-6"
+          class="grid h-[255px] place-items-center overflow-hidden bg-base-300"
           :to="`/templates/${item.id}/generate`"
           :aria-label="`Generate from ${item.name}`"
         >
           <img
             v-if="!unavailablePreviews.has(item.id)"
-            class="h-full min-h-0 w-full object-contain"
+            class="h-full min-h-0 w-full object-cover object-top"
             :src="`/api/templates/${item.id}/preview`"
             alt=""
             loading="lazy"

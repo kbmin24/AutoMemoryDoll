@@ -293,7 +293,11 @@ user-generated PDFs keep their current lifecycle.
 For this milestone, show preview images only in the existing template cards,
 replacing the unavailable placeholder when an image exists. Clicking a card's
 preview opens the template generation form, matching its template-name link.
-Preserve the existing card layout and use a contained image. Keep the template
+The owner's subsequent instruction supersedes the contained thumbnail styling:
+fill the entire card image area without padding, crop overflow, and anchor the
+image at the top and horizontal center (`object-fit: cover` and
+`object-position: center top`). The generated WebP itself remains uncropped.
+Preserve the existing card layout. Keep the template
 DTO unchanged; authenticated image requests determine availability on disk.
 Cards refresh on list reload/re-entry, without live polling or extra status UI.
 

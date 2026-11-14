@@ -10,7 +10,7 @@ vi.mock('../src/api/client', () => ({
   })),
 }));
 afterEach(() => vi.restoreAllMocks());
-it('shows a contained lazy preview linked to generation and falls back on image failure', async () => {
+it('shows a filling top-centered lazy preview linked to generation and falls back on image failure', async () => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -27,7 +27,8 @@ it('shows a contained lazy preview linked to generation and falls back on image 
   const image = wrapper.get('img');
   expect(image.attributes('src')).toBe('/api/templates/letter/preview');
   expect(image.attributes('loading')).toBe('lazy');
-  expect(image.classes()).toContain('object-contain');
+  expect(image.classes()).toContain('object-cover');
+  expect(image.classes()).toContain('object-top');
   expect(image.element.closest('a')?.getAttribute('href')).toBe(
     '/templates/letter/generate',
   );
