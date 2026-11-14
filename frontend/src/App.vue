@@ -79,6 +79,11 @@ async function signOut() {
         >
         <RouterLink
           class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
+          to="/jobs"
+          >Jobs</RouterLink
+        >
+        <RouterLink
+          class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
           v-if="session.user.role !== 'user'"
           to="/admin/users"
           >Users</RouterLink

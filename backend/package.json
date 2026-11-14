@@ -5,12 +5,12 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/server.ts",
+    "start": "bash scripts/run-service.sh api",
     "create-owner": "tsx src/cli/create-owner.ts",
     "db:generate": "prisma generate --config prisma7.config.ts",
     "db:migrate:dev": "prisma migrate dev --config prisma7.config.ts",
     "db:migrate:deploy": "prisma migrate deploy --config prisma7.config.ts",
-    "worker": "tsx src/worker/main.ts"
+    "worker": "bash scripts/run-service.sh worker"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.5",

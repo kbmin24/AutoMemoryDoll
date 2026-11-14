@@ -1,17 +1,34 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ContainerPdfGenerator, runDocker } from '../src/worker/container-runner.js';
-import { loadWorkerConfig } from '../src/worker/config.js';
+import { captureLogs } from './helpers/logging.js';
+import {
+  ContainerPdfGenerator,
+  runDocker,
+} from '../src/worker/container-runner.js';
+import {
+  loadWorkerConfig,
+  requireCompilerIdentity,
+} from '../src/worker/config.js';
 
 let root: string;
 beforeEach(async () => {
+  vi.spyOn(process, 'getuid').mockReturnValue(2101);
+  vi.spyOn(process, 'getgid').mockReturnValue(2102);
   root = await mkdtemp(join(tmpdir(), 'amd-docker-'));
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -31,7 +48,9 @@ it('requires explicit resource limits in production and validates every limit', 
   expect(loadWorkerConfig({ ...base, ...limits }).wallTimeMs).toBe(60000);
   for (const key of Object.keys(limits)) {
     for (const value of ['0', '-1', 'NaN', 'Infinity', 'abc', '']) {
-      expect(() => loadWorkerConfig({ ...base, ...limits, [key]: value })).toThrow();
+      expect(() =>
+        loadWorkerConfig({ ...base, ...limits, [key]: value }),
+      ).toThrow();
     }
   }
 });
@@ -54,6 +73,8 @@ it('launches with fixed isolation flags, resource limits and read-only input', a
   };
   const generator = new ContainerPdfGenerator(
     {
+      uid: 2101,
+      gid: 2102,
       image: 'compiler:test',
       cpus: 1,
       memoryMb: 512,
@@ -70,7 +91,7 @@ it('launches with fixed isolation flags, resource limits and read-only input', a
     '--cap-drop=ALL',
     '--network=none',
     '--security-opt=no-new-privileges',
-    '--user=65532:65532',
+    '--user=2101:2102',
     '--cpus=1',
     '--memory=512m',
     '--memory-swap=512m',
@@ -88,6 +109,8 @@ it('rejects mismatched paths and comma injection in mount sources before invokin
   const execute = vi.fn();
   const generator = new ContainerPdfGenerator(
     {
+      uid: 2101,
+      gid: 2102,
       image: 'compiler:test',
       cpus: 1,
       memoryMb: 512,
@@ -114,6 +137,8 @@ it('rejects success manifest when the container exited unsuccessfully', async ()
   );
   const generator = new ContainerPdfGenerator(
     {
+      uid: 2101,
+      gid: 2102,
       image: 'compiler:test',
       cpus: 1,
       memoryMb: 512,
@@ -138,6 +163,8 @@ it('kills a timed-out Docker CLI and still forcibly removes the named container'
   const id = randomUUID();
   const generator = new ContainerPdfGenerator(
     {
+      uid: 2101,
+      gid: 2102,
       image: 'compiler:test',
       cpus: 1,
       memoryMb: 512,
@@ -160,6 +187,8 @@ it('stops the container before reading untrusted output', async () => {
   const filename = `${randomUUID()}.pdf`;
   const generator = new ContainerPdfGenerator(
     {
+      uid: 2101,
+      gid: 2102,
       image: 'compiler:test',
       cpus: 1,
       memoryMb: 512,
@@ -198,4 +227,91 @@ it('never forwards raw diagnostics while bounding the captured error tail', asyn
   } finally {
     write.mockRestore();
   }
+});
+
+it('uses the actual non-root service identity without requiring a fixed UID', () => {
+  expect(requireCompilerIdentity()).toEqual({ uid: 2101, gid: 2102 });
+  const config = loadWorkerConfig({
+    DATABASE_URL: 'postgresql://localhost/test',
+    REDIS_URL: 'redis://localhost',
+  });
+  expect(config).toMatchObject({ uid: 2101, gid: 2102 });
+});
+
+it.each([
+  [0, 2102],
+  [2101, 0],
+  [0, 0],
+])('rejects privileged worker identity %i:%i', (uid, gid) => {
+  vi.mocked(process.getuid!).mockReturnValue(uid);
+  vi.mocked(process.getgid!).mockReturnValue(gid);
+  expect(() => requireCompilerIdentity()).toThrow('non-root');
+});
+
+it.each([125, 0])(
+  'reports Docker exit code %i when no manifest was produced, without logging raw stderr',
+  async (code) => {
+    const id = randomUUID();
+    const output = join(root, id, 'output');
+    await mkdir(output, { recursive: true });
+    const { logger, events } = captureLogs();
+    const execute = vi.fn(async (args: string[]) => ({
+      code: args[0] === 'run' ? code : 0,
+      stderr: 'SECRET compiler or daemon diagnostics',
+    }));
+    const generator = new ContainerPdfGenerator(
+      {
+        uid: 2101,
+        gid: 2102,
+        image: 'compiler:test',
+        cpus: 1,
+        memoryMb: 512,
+        pids: 64,
+        wallTimeMs: 1000,
+      },
+      execute,
+      logger,
+    );
+    await expect(
+      generator.generate(join(root, id, 'input'), output),
+    ).rejects.toThrow(
+      `Compiler container did not produce result.json (Docker exit code: ${code})`,
+    );
+    expect(execute.mock.calls.at(-1)?.[0]).toEqual([
+      'rm',
+      '--force',
+      `amd-compiler-${id}`,
+    ]);
+    expect(
+      events.find((event) => event.message === 'compiler.failed'),
+    ).toMatchObject({ jobId: id, exitCode: code, errorCode: 'compiler' });
+    expect(JSON.stringify(events)).not.toContain('SECRET');
+  },
+);
+
+it('preserves a reported compilation failure when the compiler exits nonzero', async () => {
+  const id = randomUUID();
+  const output = join(root, id, 'output');
+  await mkdir(output, { recursive: true });
+  const result = {
+    result: 'failed',
+    filename: null,
+    message: 'Compilation failed',
+  };
+  await writeFile(join(output, 'result.json'), JSON.stringify(result));
+  const generator = new ContainerPdfGenerator(
+    {
+      uid: 2101,
+      gid: 2102,
+      image: 'compiler:test',
+      cpus: 1,
+      memoryMb: 512,
+      pids: 64,
+      wallTimeMs: 1000,
+    },
+    async (args) => ({ code: args[0] === 'run' ? 1 : 0, stderr: '' }),
+  );
+  expect(await generator.generate(join(root, id, 'input'), output)).toEqual(
+    result,
+  );
 });

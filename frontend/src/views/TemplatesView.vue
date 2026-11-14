@@ -81,7 +81,11 @@ async function remove() {
           <div class="text-[13px] text-muted">Preview unavailable</div>
         </div>
         <div class="card-body gap-0 px-5 py-[18px] [&_h2]:m-0 [&_h2]:text-base">
-          <h2>{{ item.name }}</h2>
+          <h2>
+            <RouterLink class="link" :to="`/templates/${item.id}/generate`">{{
+              item.name
+            }}</RouterLink>
+          </h2>
           <RouterLink class="link" :to="`/templates/${item.id}/edit`"
             >Edit template</RouterLink
           >

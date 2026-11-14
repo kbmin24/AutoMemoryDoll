@@ -80,6 +80,44 @@ afterEach(async () => {
 });
 
 describe('generation routes', () => {
+  it('discovers unique aliases across nested UTF-8 files and ignores binary content', async () => {
+    await storage.createDirectory(templateId, ['support']);
+    await storage.writeText(
+      templateId,
+      ['support', 'part.tex'],
+      '@resource(logo) @resource(signature)',
+    );
+    await writeFile(
+      join(root, 'templates', templateId, 'binary.dat'),
+      Buffer.from([255, 64, 114]),
+    );
+    const response = await request(app).get(
+      `/api/templates/${templateId}/resources`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.aliases.sort()).toEqual(['logo', 'signature']);
+  });
+
+  it('keeps resource discovery private and validates requests', async () => {
+    await request(app)
+      .get(`/api/templates/${templateId}/resources`)
+      .set('X-Test-User', otherId)
+      .expect(404);
+    await request(app).get('/api/templates/invalid/resources').expect(400);
+    await request(app)
+      .get(`/api/templates/${templateId}/resources?extra=1`)
+      .expect(400);
+    await storage.writeText(
+      templateId,
+      ['template.tex'],
+      '@resource(../secret)',
+    );
+    await request(app)
+      .get(`/api/templates/${templateId}/resources`)
+      .expect(400);
+  });
+
+
   it('accepts multipart data and an upload keyed by alias', async () => {
     const response = await request(app)
       .post(`/api/templates/${templateId}/generations`)

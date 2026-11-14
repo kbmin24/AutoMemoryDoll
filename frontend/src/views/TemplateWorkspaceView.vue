@@ -11,6 +11,7 @@ import { api } from "../api/client";
 import type { Template, TreeEntry } from "../api/types";
 import FileTree from "../components/FileTree.vue";
 import TextEditor from "../components/TextEditor.vue";
+import { codeLanguageForFile } from "../editor";
 import ImagePreview from "../components/ImagePreview.vue";
 import ShapeEditor from "../components/ShapeEditor.vue";
 
@@ -32,6 +33,19 @@ const manifest = ref(initialManifest());
 const savedManifest = ref(JSON.stringify(manifest.value));
 const files = ref<TreeEntry[]>([]);
 const selected = ref<TreeEntry | null>(null);
+const editorLanguage = computed(() =>
+  codeLanguageForFile(selected.value?.segments ?? []),
+);
+const editorVariables = computed(() => {
+  if (editorLanguage.value !== "jinja-latex") return [];
+  return (manifest.value.shape?.fields ?? [])
+    .filter((field) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(field.variable))
+    .map((field) => ({
+      label: field.variable,
+      type: "variable",
+      detail: `${field.label} · ${field.type}`,
+    }));
+});
 const text = ref("");
 const savedText = ref("");
 const editable = ref(false);
@@ -678,7 +692,10 @@ async function fileAction(
               />
               <TextEditor
                 v-else-if="editable"
+                :key="selected?.segments.join('/')"
                 v-model="text"
+                :lang="editorLanguage"
+                :variables="editorVariables"
                 :busy="busy"
                 :dirty="fileDirty"
                 @save="saveFile"

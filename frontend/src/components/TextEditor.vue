@@ -1,17 +1,24 @@
 <script setup lang="ts">
+import CodeEditArea from './CodeEditArea.vue';
+import type { Completion } from '@codemirror/autocomplete';
+import type { CodeLanguage } from '../editor';
 const text = defineModel<string>({ required: true });
-defineProps<{ busy: boolean; dirty: boolean }>();
+defineProps<{
+  busy: boolean;
+  dirty: boolean;
+  lang?: CodeLanguage;
+  variables?: readonly Completion[];
+}>();
 const emit = defineEmits<{ save: [] }>();
 </script>
 <template>
   <div class="flex min-h-0 flex-1 flex-col gap-3">
-    <label for="file-content" class="sr-only">File content</label>
-    <textarea
-      class="textarea block min-h-0 w-full flex-1 resize-none overflow-auto p-4 font-mono leading-relaxed [tab-size:2]"
+    <CodeEditArea
       id="file-content"
       v-model="text"
-      aria-label="File content"
-      spellcheck="false"
+      :lang="lang"
+      :variables="variables"
+      label="File content"
       :disabled="busy"
     />
     <div class="flex shrink-0 items-center gap-3">

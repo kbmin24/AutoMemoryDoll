@@ -29,6 +29,11 @@ Mount an empty, writable directory at `/output`. On success it contains `<UUID>.
 
 ## Launch
 
+The queue consumer overrides the image's UID/GID with its own non-root service
+identity. For consumer-managed jobs, provision storage for that account; no image
+rebuild is required when the service UID/GID changes. The standalone launch below
+retains the image default of `65532:65532`.
+
 Prepare absolute host paths. The image runs as UID/GID `65532:65532`, so that user must be able to write to the host directory mounted at `/output`. On a rootful Docker host, set up a fresh output directory with:
 
 ```sh
@@ -58,7 +63,7 @@ The image runs as a non-root user. `/input` and the bundled TeX files are read-o
 With Docker and `jq` installed, run:
 
 ```sh
-sh compiler/tests/container-smoke.sh
+sudo sh compiler/tests/container-smoke.sh
 ```
 
 This builds the image, runs a successful job with escaped data, `|safe`, a local class and a relative resource, then checks PDF bytes and the result manifest. It also checks non-object JSON and invalid TeX failures. The script transfers fixtures and results through temporary Docker volumes, so it works when the Docker daemon cannot see the CLI's temporary directory. Each compiler run uses `--network none`, a read-only root and input mount, and writable output and private temp mounts. To repeat under gVisor, set `CONTAINER_RUNTIME=runsc`.

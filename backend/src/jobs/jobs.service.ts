@@ -71,6 +71,31 @@ export function validateGenerationData(
   return data;
 }
 
+export async function templateResourceAliases(
+  storage: Storage,
+  templateId: string,
+): Promise<string[]> {
+  const texts: string[] = [];
+  for (const entry of await storage.listTemplateTree(templateId)) {
+    if (entry.kind !== 'file') continue;
+    const stream = await storage.openDownload(templateId, entry.segments);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    const text = decodeTemplateText(Buffer.concat(chunks));
+    if (text !== null) texts.push(text);
+  }
+  return findResourceAliases(texts);
+}
+
+function decodeTemplateText(bytes: Buffer): string | null {
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return text.includes('\0') ? null : text;
+  } catch {
+    return null;
+  }
+}
+
 async function textFiles(root: string): Promise<{ path: string; text: string }[]> {
   const result: { path: string; text: string }[] = [];
   const visit = async (directory: string): Promise<void> => {
@@ -80,12 +105,8 @@ async function textFiles(root: string): Promise<{ path: string; text: string }[]
         await visit(path);
       } else if (entry.isFile()) {
         const bytes = await readFile(path);
-        try {
-          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-          if (!text.includes('\0')) result.push({ path, text });
-        } catch {
-          // Binary support files are copied unchanged.
-        }
+        const text = decodeTemplateText(bytes);
+        if (text !== null) result.push({ path, text });
       }
     }
   };

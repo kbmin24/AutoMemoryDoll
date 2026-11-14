@@ -1,11 +1,15 @@
 import { createRouter, createWebHistory, type RouterHistory } from 'vue-router';
 import { watch } from 'vue';
 import { refreshSession, session } from './api/client';
+import JobsView from './views/JobsView.vue';
+import JobDetailView from './views/JobDetailView.vue';
 import LoginView from './views/LoginView.vue';
 import AccountView from './views/AccountView.vue';
 import AdminUsersView from './views/AdminUsersView.vue';
 import TemplatesView from './views/TemplatesView.vue';
-import TemplateWorkspaceView from './views/TemplateWorkspaceView.vue';
+
+const TemplateWorkspaceView = () => import('./views/TemplateWorkspaceView.vue');
+const GenerateView = () => import('./views/GenerateView.vue');
 
 export function createAppRouter(history: RouterHistory = createWebHistory()) {
   let initialized = false;
@@ -19,6 +23,17 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       {
         path: '/templates/:id/edit',
         component: TemplateWorkspaceView,
+        meta: { workspace: true },
+      },
+      {
+        path: '/templates/:id/generate',
+        component: GenerateView,
+        meta: { workspace: true },
+      },
+      { path: '/jobs', component: JobsView },
+      {
+        path: '/jobs/:id',
+        component: JobDetailView,
         meta: { workspace: true },
       },
       { path: '/account', component: AccountView },

@@ -18,3 +18,15 @@ it('requires authentication before looking up preview files', async () => {
     .expect(401);
   expect(read).not.toHaveBeenCalled();
 });
+
+it('requires authentication before discovering template resource aliases', async () => {
+  const storage = new FileSystemStorage('/unused');
+  const list = vi.spyOn(storage, 'listTemplateTree');
+  const app = createApp(
+    {} as Parameters<typeof createApp>[0],
+    { jwtSecret: 'test-secret-at-least-32-characters-long', cookieHours: 12 },
+    storage,
+  );
+  await request(app).get(`/api/templates/${randomUUID()}/resources`).expect(401);
+  expect(list).not.toHaveBeenCalled();
+});

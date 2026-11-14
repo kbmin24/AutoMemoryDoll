@@ -30,3 +30,13 @@ export interface TreeEntry {
   kind: 'file' | 'directory';
   segments: string[];
 }
+
+export interface GenerationJob {
+  id: string;
+  templateId: string;
+  templateName?: string;
+  status: 'queued' | 'generating' | 'ok' | 'failed';
+  message: string;
+  timestamp: string;
+  pdfFilename: string | null;
+}

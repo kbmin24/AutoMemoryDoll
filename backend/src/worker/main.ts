@@ -6,7 +6,7 @@ import { createPrismaClient } from '../db/prisma.js';
 import { queueName } from '../jobs/queue.js';
 import { FileSystemStorage } from '../storage/filesystem-storage.js';
 import { validateId } from '../storage/paths.js';
-import { loadWorkerConfig, requireCompilerIdentity } from './config.js';
+import { loadWorkerConfig } from './config.js';
 import { ContainerPdfGenerator } from './container-runner.js';
 import { JobProcessor, reconcileFailedDeliveries } from './jobs.worker.js';
 
@@ -14,10 +14,11 @@ loadEnvironment();
 
 await runService('consumer', async (logger) => {
   const config = loadWorkerConfig(process.env);
-  requireCompilerIdentity();
   const db = createPrismaClient(config.databaseUrl);
   const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
-  connection.on('error', (error) => logger.error('queue.error', safeError(error)));
+  connection.on('error', (error) =>
+    logger.error('queue.error', safeError(error)),
+  );
   const queue = new Queue(queueName, { connection });
   queue.on('error', (error) => logger.error('queue.error', safeError(error)));
   const generator = new ContainerPdfGenerator(config, undefined, logger);

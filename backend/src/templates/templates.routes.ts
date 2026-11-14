@@ -16,7 +16,7 @@ import {
 } from './templates.service.js';
 import { workspaceRoutes } from './workspace.routes.js';
 import { generationRoutes } from '../jobs/jobs.routes.js';
-import type { QueuePublisher } from '../jobs/jobs.service.js';
+import { templateResourceAliases, type QueuePublisher } from '../jobs/jobs.service.js';
 
 function userId(request: AuthRequest): string {
   return request.currentUser!.id;
@@ -65,6 +65,20 @@ export function templatesRoutes(
     const template = await getTemplate(db, userId(request), String(request.params.id));
     response.json({ template: templateDto(template) });
   });
+
+  router.get(
+    '/:id/resources',
+    id,
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const templateId = String(request.params.id);
+      await getTemplate(db, userId(request), templateId);
+      response.set('Cache-Control', 'private, no-store');
+      response.json({ aliases: await templateResourceAliases(storage, templateId) });
+    },
+  );
 
   router.patch(
     '/:id',

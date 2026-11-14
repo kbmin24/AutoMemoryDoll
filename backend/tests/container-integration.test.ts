@@ -10,10 +10,13 @@ import { requireCompilerIdentity } from '../src/worker/config.js';
 it.skipIf(process.env.RUN_COMPILER_INTEGRATION !== '1')(
   'compiles offline under runsc and removes output on failure',
   async () => {
-    requireCompilerIdentity();
-    const root = await mkdtemp(join(process.env.COMPILER_TEST_ROOT ?? tmpdir(), 'amd-runsc-'));
+    const identity = requireCompilerIdentity();
+    const root = await mkdtemp(
+      join(process.env.COMPILER_TEST_ROOT ?? tmpdir(), 'amd-runsc-'),
+    );
     const storage = new FileSystemStorage(root);
     const generator = new ContainerPdfGenerator({
+      ...identity,
       image: process.env.COMPILER_IMAGE ?? 'automemorydoll-compiler:local',
       cpus: 1,
       memoryMb: 1024,
@@ -30,17 +33,28 @@ it.skipIf(process.env.RUN_COMPILER_INTEGRATION !== '1')(
       );
       const goodId = randomUUID();
       const input = await storage.snapshot(templateId, goodId);
-      await writeFile(join(input, 'data.json'), JSON.stringify({ name: 'Ada & friends' }));
+      await writeFile(
+        join(input, 'data.json'),
+        JSON.stringify({ name: 'Ada & friends' }),
+      );
       const { output } = await storage.prepareJobOutput(goodId);
       const success = await generator.generate(input, output);
       expect(success.result).toBe('ok');
       if (success.result !== 'ok') throw new Error('Expected compiler success');
-      expect((await readFile(join(output, success.filename))).subarray(0, 5).toString()).toBe(
-        '%PDF-',
+      expect(
+        (await readFile(join(output, success.filename)))
+          .subarray(0, 5)
+          .toString(),
+      ).toBe('%PDF-');
+      await storage.savePdf(
+        goodId,
+        join(output, success.filename),
+        success.filename,
       );
-      await storage.savePdf(goodId, join(output, success.filename), success.filename);
       await storage.cleanupJob(goodId);
-      expect(await readdir(join(root, 'pdfs', goodId))).toEqual([success.filename]);
+      expect(await readdir(join(root, 'pdfs', goodId))).toEqual([
+        success.filename,
+      ]);
 
       await storage.writeText(
         templateId,
@@ -51,8 +65,12 @@ it.skipIf(process.env.RUN_COMPILER_INTEGRATION !== '1')(
       const badInput = await storage.snapshot(templateId, badId);
       await writeFile(join(badInput, 'data.json'), '{}');
       const bad = await storage.prepareJobOutput(badId);
-      expect((await generator.generate(badInput, bad.output)).result).toBe('failed');
-      expect((await readdir(bad.output)).filter((name) => name.endsWith('.pdf'))).toEqual([]);
+      expect((await generator.generate(badInput, bad.output)).result).toBe(
+        'failed',
+      );
+      expect(
+        (await readdir(bad.output)).filter((name) => name.endsWith('.pdf')),
+      ).toEqual([]);
       await storage.cleanupJob(badId);
       expect(await storage.jobInputExists(badId)).toBe(false);
     } finally {

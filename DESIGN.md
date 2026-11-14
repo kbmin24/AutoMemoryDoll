@@ -24,6 +24,9 @@ The owner approved the Noto Sans mockup and explicitly confirmed that this desig
 - On 2026-11-12, the owner approved PNG/JPEG previews using Sharp to validate actual image content and re-encode previews. Reject preview inputs above 20 MiB, 16,000,000 pixels, or 8,192 pixels on either axis; fit previews within 2,048 × 2,048 without enlargement. Reject animation and unsupported image formats. Reuse authenticated owner-only workspace access and safe path handling. Preview responses are private, not cached, and contain re-encoded PNG pixels without source metadata or appended payloads. Original uploads/downloads are unchanged. Limit concurrent preview processing and processing time; these limits are not OS-level decoder isolation. Invalid UTF-8 text reads produce controlled workspace errors.
 - On 2026-11-12, the owner requested prompting for a replacement filename when an upload name is invalid or already exists. Suggest a name using random-words generate({exactly: 2, minLength: 8, maxLength: 20, join: "-"}), preserving the original extension when present.
 - On 2026-11-12, the owner requested removing the top Workspace folder from the file tree. Show top-level entries directly; the tree background serves as the workspace root for selection and moves.
+- On 2026-11-13, the owner requested a Generate-specific fork of the job-result component: a PDF viewer with one horizontal status bar containing Ready, Generating... (daisyUI loading spinner), Generated (Font Awesome check), or Error (Font Awesome x). Use a grey background for ready/in-progress, pale red for errors, and pale green for successful generation. Put contextual information behind a muted Font Awesome info control, available on hover, focus, and touch, and omit it when no relevant information exists. Keep an icon-only download control at the right. On 2026-11-14, the owner moved the bar into the top of the right-hand PDF viewer (and the Preview pane on mobile), superseding its earlier full-width placement; remove the duplicated status text, preview heading, and metadata blocks from this screen. On 2026-11-14, the owner approved the same compact presentation for job details: share JobStatusBar between both PDF preview components, use Generated instead of ok, move the confirmation and submission timestamp into the information tooltip, and place the icon-only download at the right. The job-detail preview fills its workspace; the history list is unchanged.
+- On 2026-11-14, the owner selected a shared `CodeEditArea` component using vue-codemirror and CodeMirror 6 to replace the workspace and generation JSON textareas. Its optional `lang` prop accepts `latex`, `jinja-latex`, and `javascript` (also used to highlight JSON); an omitted language keeps plain-text editing. Only the root `template.tex` uses Jinja over LaTeX. Other `.tex`, `.ltx`, `.cls`, `.sty`, `.dtx`, `.ins`, `.def`, and `.clo` files use LaTeX; `.json`, `.jsonc`, `.js`, `.mjs`, and `.cjs` use JavaScript. Other UTF-8 files stay editable as plain text. Use the official Jinja and JavaScript language extensions alongside the installed LaTeX package, with no extra TeX linting or rewriting. Preserve save/dirty controls, busy-state editing restrictions, JSON object validation, and separate undo history for each selected file. Tab leaves the editor instead of trapping keyboard focus. This changes editor presentation only; compiler templating still applies solely to the root `template.tex`.
+- On 2026-11-14, the owner approved autocomplete suggestions for current data-shape variables while editing the root `template.tex`. Suggestions show the variable name with its display label and type, update as the shape changes, and are absent for other files or a disabled shape. Blank/invalid draft variable names are omitted. Use the existing Jinja completion configuration, preserving the document, undo history, and ordinary Jinja built-ins and local variables. Suggestions do not restrict which variables authors may type and do not change compiler behavior.
 - The interface must be mobile friendly. Desktop side-by-side workspaces become tabbed interfaces on mobile. Successful document generation automatically switches to the preview tab on mobile. Breakpoints and behavior after a failed generation remain open.
 - Give screens a little more breathing room, with comfortable controls and clear separation between sections. Use the approved mockup's spacing as the reference.
 - Generation failures show a short explanation with expandable technical details. This presentation choice does not expand the backend's public error contract; the content available for those details remains to be determined.
@@ -103,6 +106,29 @@ Batch generation is a later milestone, not part of the first compiler-container 
 - The worker stops on the first compilation failure. A failed batch leaves no PDFs, including PDFs produced before that failure.
 - The exact on-disk batch input layout, batch result manifest, output naming, and cleanup mechanism are open.
 
+## Service identity update from 2026-11-13
+
+The owner selected a dedicated unprivileged system account with an OS-assigned
+UID/GID, replacing the fixed host-side `65532:65532` requirement. The API and
+consumer share that identity for private storage and logs. The consumer rejects
+UID or primary GID zero and launches compiler containers with its actual numeric
+UID/GID via Docker's `--user` override. The standalone compiler image retains its
+`65532:65532` default. Only the consumer receives Docker socket access.
+Administrator setup creates the account and provisions storage, logs, and parent
+traversal.
+
+The owner requested npm commands that accept an existing service username:
+`npm run dev:backend -- <username>` and `npm run worker -- <username>`.
+The backend workspace's `start` and `worker` scripts accept the same argument.
+These commands use `sudo setpriv`, resolve the account's UID and primary GID,
+and reject root identities. The API clears supplementary groups; only the
+consumer receives the Docker socket's group for that process. Both start from
+`backend/` using npm's Node executable and load the existing backend environment
+files. Omitting the username preserves startup under the invoking identity;
+the consumer still requires a non-root UID/GID. The commands do not create
+accounts or migrate permissions. The frontend runs under the developer's account
+with `npm run dev:frontend`.
+
 ## MVP application: decided behavior
 
 The owner approved the [MVP application design](docs/superpowers/specs/2026-10-25-mvp-application-design.md) on 2026-10-25. Its proposals are now decisions for this milestone; this record highlights the main contracts, while the approved design gives their details.
@@ -112,7 +138,7 @@ The owner approved the [MVP application design](docs/superpowers/specs/2026-10-2
 - The frontend uses Vue.js and polls for generation status.
 - The backend API uses Express on Node.js with TypeScript.
 - The backend enqueues generation jobs in Redis using BullMQ. A separate Node.js/TypeScript queue consumer service, housed under `backend/`, consumes jobs and eventually launches compiler containers. The consumer is not part of the first compiler-container milestone.
-- On 2026-11-08, the owner confirmed that the queue consumer runs as UID/GID `65532:65532`, matching the compiler, so private output directories need neither root nor broad write permissions. The API and consumer must share storage access; input snapshot files must be readable by that identity. Interrupted jobs become failed without automatic recompilation.
+- On 2026-11-08, the owner confirmed that the queue consumer runs as UID/GID `65532:65532`, matching the compiler (superseded by the 2026-11-13 service identity update), so private output directories need neither root nor broad write permissions. The API and consumer must share storage access; input snapshot files must be readable by that identity. Interrupted jobs become failed without automatic recompilation.
 - The owner selected Prisma ORM for PostgreSQL access and migrations on 2026-11-01. The implementation plan pins the supported Prisma 7 line for this MVP.
 - The backend dispatches concrete JSON. Data binding is deferred beyond the MVP.
 - Generated PDFs and job history are retained. PDF files live on the backend filesystem in a fixed directory named by job ID.
@@ -127,6 +153,8 @@ The owner approved the [MVP application design](docs/superpowers/specs/2026-10-2
 - Users can manage a directory-like workspace for each template and keep reusable template files there. Its screen has a directory browser on the left and a textarea editor for template content on the right. The directory browser supports creating, uploading, renaming, moving, and deleting files and folders. The editor opens UTF-8 text files; binary files such as images are managed through upload/download instead of text editing. The generation screen also accepts files supplied for that single job. Workspace file and directory names use the conservative ASCII validation and storage boundaries in the approved design.
 - Template workspaces use filesystem directories. On a generation request, the backend snapshots the current template files and that job's resource uploads into a private job input directory before enqueuing. A later workspace edit does not change an already submitted job.
 - HTTP file uploads use Multer disk staging in a private server-owned directory. The filesystem storage service validates a staged file and moves it into the workspace or job resources; it does not accept upload streams directly.
+- On 2026-11-13, the owner confirmed that generation submission stays in the split form/preview workspace; the separate job-detail page remains available from history. This supersedes Task 9's older instruction to navigate to job detail on submission. A successful generation selects the Preview pane on mobile.
+- On 2026-11-13, the owner clarified that resource alias discovery is available to the user who owns the template, regardless of account role. Task 9 adds `GET /api/templates/:id/resources` returning `{aliases: string[]}` under the existing private-template authorization rules.
 - Per-job resource uploads use user-visible aliases rather than user-entered filesystem paths. The editor can insert `@resource(alias)` into UTF-8 template text. During snapshot preparation, the backend validates each alias, stores the upload under a server-generated name, and replaces the exact token with the internal relative path. Missing or duplicate aliases fail before queueing. The four data-shape field types remain unchanged.
 - MVP generation uses plain values entered by the user. There is no data binding to external or stored datasets.
 

@@ -15,6 +15,7 @@ export async function api<T>(
   path: string,
   method = 'GET',
   body?: unknown,
+  responseType: 'json' | 'blob' = 'json',
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined && !(body instanceof FormData)) {
@@ -47,6 +48,7 @@ export async function api<T>(
         : 'Request failed. Please try again.',
     );
   }
+  if (responseType === 'blob') return (await response.blob()) as T;
   const content = await response.text();
   return content.length === 0 ? (undefined as T) : JSON.parse(content);
 }

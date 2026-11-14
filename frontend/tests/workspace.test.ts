@@ -3,6 +3,9 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createMemoryHistory } from "vue-router";
 import { createAppRouter } from "../src/router";
 import App from "../src/App.vue";
+import CodeEditArea from "../src/components/CodeEditArea.vue";
+import { editorView, setEditorText } from "./helpers/code-editor";
+import { undo } from "@codemirror/commands";
 import type { TreeEntry } from "../src/api/types";
 import { session } from "../src/api/client";
 
@@ -190,12 +193,12 @@ it("edits text without alias controls and reports failed saves", async () => {
   await click("template.tex");
   expect(wrapper.find('[aria-label="Resource alias"]').exists()).toBe(false);
   expect(wrapper.text()).not.toContain("Insert resource");
-  await wrapper.get('[aria-label="File content"]').setValue("changed");
+  await setEditorText(wrapper, "changed");
   await click("Save file");
   expect(JSON.parse(String(mutation("PUT", "/text")!.init.body)).text).toBe(
     "changed",
   );
-  await wrapper.get('[aria-label="File content"]').setValue("changed again");
+  await setEditorText(wrapper, "changed again");
   failSave = true;
   await click("Save file");
   expect(wrapper.text()).toContain("Storage limit exceeded");
@@ -231,12 +234,9 @@ it("protects template.tex and offers download rather than editing rejected binar
 it("warns before discarding edits when selecting a file or leaving", async () => {
   const router = await open();
   await click("template.tex");
-  await wrapper.get('[aria-label="File content"]').setValue("unsaved");
+  await setEditorText(wrapper, "unsaved");
   await click("logo.png");
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("unsaved");
+  expect(editorView(wrapper).state.doc.toString()).toBe("unsaved");
   await router.push("/templates");
   expect(router.currentRoute.value.path).toBe("/templates/letter/edit");
   expect(window.confirm).toHaveBeenCalled();
@@ -257,10 +257,7 @@ it("creates files and folders, renames, moves, deletes with confirmation, and up
     segments: ["notes.tex"],
     text: "",
   });
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("Hello");
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
   await click("Create ▾");
   await click("New folder");
   await wrapper.get('[aria-label="New folder name"]').setValue("assets");
@@ -452,33 +449,25 @@ it("uploads to the captured folder even if selection changes while the picker is
 it("keeps unsaved edits when creation is declined", async () => {
   await open();
   await click("template.tex");
-  await wrapper.get('[aria-label="File content"]').setValue("unsaved");
+  await setEditorText(wrapper, "unsaved");
   await click("Create ▾");
   await click("New file");
   expect(wrapper.find('[aria-label="New file name"]').exists()).toBe(false);
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("unsaved");
+  expect(editorView(wrapper).state.doc.toString()).toBe("unsaved");
 });
 it("guards edits made after inline creation began", async () => {
   await open();
   await click("template.tex");
   await click("Create ▾");
   await click("New file");
-  await wrapper
-    .get('[aria-label="File content"]')
-    .setValue("changed while naming");
+  await setEditorText(wrapper, "changed while naming");
   await wrapper.get('[aria-label="New file name"]').setValue("new.tex");
   await wrapper
     .get('[aria-label="New file name"]')
     .trigger("keydown", { key: "Enter" });
   await flushPromises();
   expect(mutation("PUT", "/text")).toBeUndefined();
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("changed while naming");
+  expect(editorView(wrapper).state.doc.toString()).toBe("changed while naming");
 });
 
 it("renames an unselected file inline, retains failed names and cancels without changing the editor", async () => {
@@ -499,10 +488,7 @@ it("renames an unselected file inline, retains failed names and cancels without 
   expect(input.element.value).toBe("brand.png");
   await input.trigger("keydown", { key: "Escape" });
   expect(wrapper.find('[aria-label="Rename logo.png"]').exists()).toBe(false);
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("Hello");
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
   expect(JSON.parse(String(mutation("POST", "/move")!.init.body))).toEqual({
     from: ["logo.png"],
     to: ["brand.png"],
@@ -578,7 +564,7 @@ it("shows template name only under Settings and removes the move form", async ()
 it("moves with drag/drop while retaining dirty guards and reporting failed requests", async () => {
   await open();
   await click("template.tex");
-  await wrapper.get('[aria-label="File content"]').setValue("unsaved");
+  await setEditorText(wrapper, "unsaved");
   const drag = () =>
     wrapper.get('[aria-label="logo.png"]').trigger("dragstart", {
       dataTransfer: { setData() {}, effectAllowed: "" },
@@ -593,10 +579,7 @@ it("moves with drag/drop while retaining dirty guards and reporting failed reque
   await wrapper.get('[aria-label="parts"]').trigger("drop");
   await flushPromises();
   expect(wrapper.text()).toContain("Storage limit exceeded");
-  expect(
-    wrapper.get<HTMLTextAreaElement>('[aria-label="File content"]').element
-      .value,
-  ).toBe("unsaved");
+  expect(editorView(wrapper).state.doc.toString()).toBe("unsaved");
 });
 it("rejects move collisions before sending a request and keeps file-only downloads", async () => {
   await open();
@@ -729,4 +712,53 @@ it("previews JPEG filenames case-insensitively and resets failed previews on sel
   expect(wrapper.text()).not.toContain("Loading image");
   await click("parts");
   expect(wrapper.find(".workspace-editor img").exists()).toBe(false);
+});
+
+it("selects the code language from the workspace file and isolates file undo history", async () => {
+  workspaceFiles.push(
+    { name: "layout.sty", kind: "file", segments: ["layout.sty"] },
+    { name: "data.json", kind: "file", segments: ["data.json"] },
+    { name: "notes.txt", kind: "file", segments: ["notes.txt"] },
+  );
+  await open();
+  await click("template.tex");
+  expect(wrapper.findComponent(CodeEditArea).props("lang")).toBe("jinja-latex");
+  await setEditorText(wrapper, "Saved template");
+  await click("Save file");
+  await click("layout.sty");
+  expect(wrapper.findComponent(CodeEditArea).props("lang")).toBe("latex");
+  expect(undo(editorView(wrapper))).toBe(false);
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
+  await click("data.json");
+  expect(wrapper.findComponent(CodeEditArea).props("lang")).toBe("javascript");
+  await click("notes.txt");
+  expect(wrapper.findComponent(CodeEditArea).props("lang")).toBeUndefined();
+});
+
+it("passes current shape variables only to the root Jinja editor and updates them after shape edits", async () => {
+  await open();
+  await click("template.tex");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([
+    { label: "name", type: "variable", detail: "Name · text" },
+  ]);
+  await click("Data shape");
+  await wrapper.get('[aria-label="Variable 1"]').setValue("bad name");
+  await click("Files");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([]);
+  await click("Data shape");
+  await wrapper.get('[aria-label="Variable 1"]').setValue("student_name");
+  await wrapper.get('[aria-label="Display name 1"]').setValue("Student name");
+  await click("Files");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([
+    { label: "student_name", type: "variable", detail: "Student name · text" },
+  ]);
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
+  await click("parts");
+  await click("header.tex");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([]);
+  await click("Data shape");
+  await wrapper.get('[aria-label="Define data shape"]').setValue(false);
+  await click("Files");
+  await click("template.tex");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([]);
 });

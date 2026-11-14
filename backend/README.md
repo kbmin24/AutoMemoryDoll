@@ -34,6 +34,10 @@ The API requires `DATABASE_URL`, `REDIS_URL`, and a `JWT_SECRET` of at least
 32 characters. `STORAGE_ROOT` defaults to `./data`. Apply the backend Prisma
 migrations before starting the API with `npm --workspace backend start`.
 
+`GET /api/templates/:id/resources` returns `{ "aliases": ["logo"] }` for the
+user who owns the template, regardless of their account role. It discovers unique
+aliases in UTF-8 workspace files using the same token rules as generation.
+
 `POST /api/templates/:id/generations` accepts `{ "data": { ... } }` as JSON.
 For per-job resources, send multipart form data with a `data` field containing
 the JSON object and one file field per `@resource(alias)` in the template.
@@ -52,13 +56,83 @@ PDFs and job history have no automatic expiry, including after template deletion
 Worker logs contain safe compiler outcome categories, exit codes and timing; raw compiler stderr and template diagnostic text are excluded. Public errors describe the
 failure without exposing paths or raw TeX diagnostics.
 
-Run the consumer as **UID/GID `65532:65532`**, matching the compiler. Provision
-the shared `STORAGE_ROOT` for that identity. Run the API with the same storage
-identity so its private job snapshots and resource uploads can be read and
-removed by the consumer and its retained PDFs can be read by the API. Separate
-API/worker containers can use the same numeric UID while only the worker gets
-Docker access. Do not give the API a Docker socket. Keep storage outside any
-static web root. Job and retained-PDF directories use mode `0700`.
+Run the API and consumer as the same dedicated non-root system account.
+The consumer validates its actual UID and primary GID and supplies them to Docker
+through `--user`, overriding the compiler image's standalone default. Private
+job and PDF directories remain mode `0700`. Only the consumer gets Docker socket
+access; do not give the API a Docker socket. Keep storage outside any static web
+root. This assumes rootful Docker; rootless UID mappings need separate validation.
+
+### Starting services as a named account
+
+From the repository root, run these in separate terminals:
+
+```bash
+npm run dev:backend -- automemorydoll
+npm run worker -- automemorydoll
+npm run dev:frontend
+```
+
+The backend workspace also accepts the username directly:
+`npm --workspace backend start -- automemorydoll` and
+`npm --workspace backend run worker -- automemorydoll`.
+The account must already exist and own the configured storage and log directories.
+The commands use `sudo setpriv` and may prompt for your sudo password. They use
+the same Node executable that is running npm, set `HOME` to the selected account’s
+configured home path, and start from `backend/` so both
+services read the same environment files and resolve relative paths consistently.
+Only the worker receives the Docker socket's supplementary group; the API clears
+supplementary groups. Root accounts are rejected when a username is supplied.
+Omitting the username preserves startup as the invoking user; the worker still
+requires a non-root identity. These commands do not create users, change file
+ownership, or grant permanent group memberships.
+
+### Local service account setup
+
+Create an account with an OS-assigned UID/GID, no home directory, and no login
+shell (once, on this Linux host):
+
+```bash
+sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin automemorydoll
+```
+
+Stop existing API/consumer processes before migrating ownership. From this
+checkout, provision its configured storage and default log paths:
+
+```bash
+service_uid=$(id -u automemorydoll)
+service_gid=$(id -g automemorydoll)
+sudo mkdir -p (AutoMemoryDoll Path)/data (AutoMemoryDoll Path)/backend/logs
+sudo chown -R "$service_uid:$service_gid" (AutoMemoryDoll Path)/data (AutoMemoryDoll Path)/backend/logs
+sudo chmod 700 (AutoMemoryDoll Path)/data (AutoMemoryDoll Path)/backend/logs
+sudo setfacl -m "u:$service_uid:--x" (Parent path)
+```
+
+Use the actual configured paths if `STORAGE_ROOT` or `LOG_DIR` differs. The
+ownership migration preserves stored templates, jobs, and PDFs. Existing service
+log directories must have mode `0700`, and log files mode `0600`. Run backend
+commands that access this private state under the service identity; a CLI under
+a different account needs its own private `LOG_DIR`.
+
+The service account needs search access through each parent of the checkout,
+Node installation, storage, and logs. The ACL command above grants traversal
+through this host's private home without granting directory listing or write
+access. Provision any other private parents similarly. The logger requires
+its root and service directories to be owned by its process identity with mode
+`0700`; shared group write access alone is insufficient.
+
+File-log permission errors fall back to console logging and do not themselves
+stop generation. Look for subsequent `generation.execution_failed` or
+`compiler.failed` events. Interrupted jobs are failed by reconciliation; submit
+a fresh job after restarting rather than expecting an automatic retry.
+
+When the compiler produces no `result.json`, the consumer records a
+`compiler.failed` event with the Docker exit code before failing the job. Check
+the selected image, configured runtime, Docker socket access, and bind-mount
+paths under the same service identity. Raw compiler stderr is not added to logs.
+The consumer removes failed job snapshots and output directories, so an empty
+`data/jobs` after a terminal failure is expected; the failed job record remains
+in the database.
 
 The worker needs a Docker daemon with the `runsc` runtime and the prebuilt image
 from [the compiler instructions](../compiler/README.md). `COMPILER_IMAGE` defaults
@@ -67,6 +141,18 @@ absolute paths on the Docker daemon host; this matters when the worker itself
 runs inside a container. Job output and retained PDFs must share a filesystem
 for atomic publication. Rootless Docker UID mapping needs separate deployment
 verification; the numeric host UID requirement assumes a rootful daemon.
+
+An installed `runsc` executable must also be registered with the Docker daemon.
+If `docker info` lists only `runc`, register the existing installation and reload
+Docker, following the [official gVisor installation guide](https://gvisor.dev/docs/user_guide/install/):
+
+```bash
+sudo runsc install
+sudo systemctl reload docker
+sudo docker info --format '{{range $name, $_ := .Runtimes}}{{$name}} {{end}}'
+```
+
+The runtime list must include `runsc`. Do not substitute `runc` for compiler jobs.
 
 Each compiler run uses gVisor, no network, a read-only root and input, dropped
 capabilities, no new privileges, and only writable output and private temporary
@@ -103,7 +189,7 @@ integration tests require `TEST_DATABASE_URL` and `TEST_REDIS_URL` pointing at
 dedicated test services.
 
 The real compiler integration test is opt-in and never substitutes another
-runtime when gVisor is unavailable. Run it as UID/GID 65532 with Docker access:
+runtime when gVisor is unavailable. Run it under a non-root service identity with Docker access:
 
 ```sh
 RUN_COMPILER_INTEGRATION=1 npm --workspace backend test -- container-integration.test.ts
@@ -143,7 +229,7 @@ are logged, so idle active files cannot bypass retention or the cap. Each servic
 `owner-cli/` below `LOG_DIR`. Provision the root and service directories for their
 service identity with mode `0700`; application log files use `0600`. Existing
 insecure or inaccessible directories disable file output and trigger a safe
-stderr report. Give UID/GID `65532:65532` a writable log mount for the consumer.
+stderr report. Give the configured service identity a writable private log mount for the consumer.
 Keep these directories outside public web roots. There must be one writer per
 service directory; concurrent setup CLI invocations need separate `LOG_DIR`
 values, and future replicas need their own volumes/directories.

@@ -6,9 +6,15 @@ import { PdfGenerator, type CompilerResult } from './pdf-generator.js';
 import type { CompilerConfig } from './config.js';
 
 export type DockerResult = { code: number | null; stderr: string };
-type ExecuteDocker = (args: string[], timeoutMs: number) => Promise<DockerResult>;
+type ExecuteDocker = (
+  args: string[],
+  timeoutMs: number,
+) => Promise<DockerResult>;
 
-export function runDocker(args: string[], timeoutMs: number): Promise<DockerResult> {
+export function runDocker(
+  args: string[],
+  timeoutMs: number,
+): Promise<DockerResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, {
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -79,7 +85,7 @@ export class ContainerPdfGenerator extends PdfGenerator {
           '--read-only',
           '--cap-drop=ALL',
           '--security-opt=no-new-privileges',
-          '--user=65532:65532',
+          `--user=${this.config.uid}:${this.config.gid}`,
           `--cpus=${this.config.cpus}`,
           `--memory=${this.config.memoryMb}m`,
           `--memory-swap=${this.config.memoryMb}m`,
@@ -105,7 +111,22 @@ export class ContainerPdfGenerator extends PdfGenerator {
       // Killing the CLI alone does not guarantee the daemon stopped the container.
       await this.stop(jobId);
     }
-    const manifest = await this.readResult(outputDir);
+    let manifest: CompilerResult;
+    try {
+      manifest = await this.readResult(outputDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      this.logger.error('compiler.failed', {
+        jobId,
+        exitCode: result.code,
+        errorCode: 'compiler',
+        durationMs: performance.now() - started,
+      });
+      throw new Error(
+        `Compiler container did not produce result.json (Docker exit code: ${result.code})`,
+        { cause: error },
+      );
+    }
     if (result.code !== 0 && manifest.result === 'ok') {
       this.logger.error('compiler.failed', {
         jobId,
@@ -128,7 +149,10 @@ export class ContainerPdfGenerator extends PdfGenerator {
   }
 
   async stop(jobId: string): Promise<void> {
-    const result = await this.execute(['rm', '--force', containerName(jobId)], 10_000);
+    const result = await this.execute(
+      ['rm', '--force', containerName(jobId)],
+      10_000,
+    );
     if (result.code !== 0 && !result.stderr.includes('No such container')) {
       this.logger.error('compiler.failed', {
         jobId,
