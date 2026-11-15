@@ -61,6 +61,29 @@ describe('template manifest', () => {
     ).toEqual(['student_name', 'score', 'notes', 'passed']);
   });
 
+  it('accepts lists of each scalar type and rejects malformed list contracts', () => {
+    const manifest = (value: unknown) => ({
+      version: 1,
+      shape: { fields: [value] },
+    });
+    for (const itemType of ['text', 'longtext', 'number', 'boolean']) {
+      const list = { ...field, type: 'list', itemType };
+      expect(validateManifest(manifest(list))).toEqual(manifest(list));
+    }
+    for (const value of [
+      { ...field, type: 'list' },
+      { ...field, type: 'list', itemType: 'list' },
+      { ...field, type: 'list', itemType: null },
+      { ...field, type: 'list', itemType: ['text'] },
+      { ...field, type: 'list', itemType: [['number']] },
+      { ...field, type: 'list', itemType: 'date' },
+      { ...field, type: 'list', itemType: 'text', extra: true },
+      { ...field, itemType: 'text' },
+    ]) {
+      expect(() => validateManifest(manifest(value))).toThrow();
+    }
+  });
+
   it('requires an explicit shape choice and at least one field when enabled', () => {
     for (const input of [
       undefined,

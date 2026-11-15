@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import CodeEditArea from './CodeEditArea.vue';
-import type { Completion } from '@codemirror/autocomplete';
-import type { CodeLanguage } from '../editor';
+import { ref } from "vue";
+import CodeEditArea from "./CodeEditArea.vue";
+import type { Completion } from "@codemirror/autocomplete";
+import type { CodeLanguage } from "../editor";
 const text = defineModel<string>({ required: true });
 defineProps<{
   busy: boolean;
@@ -10,10 +11,15 @@ defineProps<{
   variables?: readonly Completion[];
 }>();
 const emit = defineEmits<{ save: [] }>();
+const codeEditor = ref<InstanceType<typeof CodeEditArea>>();
+defineExpose({
+  insertSnippet: (source: string) => codeEditor.value?.insertSnippet(source),
+});
 </script>
 <template>
   <div class="flex min-h-0 flex-1 flex-col gap-3">
     <CodeEditArea
+      ref="codeEditor"
       id="file-content"
       v-model="text"
       :lang="lang"
@@ -30,7 +36,7 @@ const emit = defineEmits<{ save: [] }>();
         Save file
       </button>
       <p role="status" class="mb-0 min-w-0 flex-1 text-xs">
-        {{ dirty ? 'Unsaved changes' : 'No unsaved file changes' }}
+        {{ dirty ? "Unsaved changes" : "No unsaved file changes" }}
       </p>
     </div>
   </div>

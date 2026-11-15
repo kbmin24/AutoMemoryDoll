@@ -54,6 +54,27 @@ export function validateGenerationData(
   const data: Record<string, unknown> = {};
   for (const field of manifest.shape.fields) {
     const value = input[field.variable];
+    if (field.type === 'list') {
+      if (value === undefined && field.optional) continue;
+      if (!Array.isArray(value)) throw new JobError('Invalid generation data');
+      if (value.length === 0) {
+        if (field.optional) continue;
+        throw new JobError('Invalid generation data');
+      }
+      for (const item of value) {
+        if (
+          ((field.itemType === 'text' || field.itemType === 'longtext') &&
+            (typeof item !== 'string' || !item.trim())) ||
+          (field.itemType === 'number' &&
+            (typeof item !== 'number' || !Number.isFinite(item))) ||
+          (field.itemType === 'boolean' && typeof item !== 'boolean')
+        ) {
+          throw new JobError('Invalid generation data');
+        }
+      }
+      data[field.variable] = value;
+      continue;
+    }
     if (
       value === undefined ||
       (field.optional && (value === '' || value === null))

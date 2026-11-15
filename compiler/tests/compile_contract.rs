@@ -114,6 +114,25 @@ fn missing_support_file_has_a_readable_error() {
 }
 
 #[test]
+fn invalid_tex_retains_source_line_in_diagnostics() {
+    let Some(bundle) = bundle_path() else { return };
+    let root = TestDir::new();
+    let template = root.path().join("template");
+    fs::create_dir(&template).unwrap();
+    let error = compile_pdf(
+        "\\documentclass{article}\n\\begin{document}\n\\unknownDiagnosticCommand\n\\end{document}",
+        &template,
+        &bundle,
+        &root.path().join("scratch"),
+    )
+    .unwrap_err();
+    let details = error.diagnostics().expect("document error diagnostics");
+    assert!(details.contains("Undefined control sequence"), "{details}");
+    assert!(details.contains("l.3"), "{details}");
+    assert!(details.contains("unknownDiagnosticCommand"), "{details}");
+}
+
+#[test]
 fn command_writes_pdf_and_success_manifest() {
     let Some(bundle) = bundle_path() else { return };
     let root = TestDir::new();

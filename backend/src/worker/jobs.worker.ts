@@ -1,5 +1,6 @@
 import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { join } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
 import { validateId } from '../storage/paths.js';
@@ -11,7 +12,34 @@ import {
   listStaleJobs,
   listTerminalJobs,
 } from '../jobs/jobs.repository.js';
-import type { PdfGenerator } from './pdf-generator.js';
+import type { CompilerResult, PdfGenerator } from './pdf-generator.js';
+
+function failureMessage(
+  result: Extract<CompilerResult, { result: 'failed' }>,
+  jobId: string,
+): string {
+  const summaries = {
+    input: 'Input validation failed.',
+    templating: 'Templating failed (MiniJinja).',
+    latex: 'LaTeX compilation failed (Tectonic).',
+  };
+  if (!result.stage) {
+    return 'Document compilation failed. Check the template and supplied values.';
+  }
+  if (result.stage === 'service') {
+    return `The compilation service could not generate the PDF. Contact the administrator. Job ID: ${jobId}`;
+  }
+  const text = stripVTControlCharacters(result.message).replace(
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g,
+    '',
+  );
+  const characters = Array.from(text);
+  const details =
+    characters.length > 8000
+      ? '[truncated]\n' + characters.slice(-7988).join('')
+      : text;
+  return `${summaries[result.stage]}\n\nTechnical details:\n${details}`;
+}
 
 export class JobProcessor {
   constructor(
@@ -41,7 +69,7 @@ export class JobProcessor {
         // Compiler diagnostics may contain document contents; log only the outcome.
         const failed = await finishJob(this.db, jobId, startedAt, {
           status: 'failed',
-          message: 'Document compilation failed. Check the template and supplied values.',
+          message: failureMessage(result, jobId),
           pdfFilename: null,
         });
         terminal = failed.count === 1;
@@ -54,7 +82,11 @@ export class JobProcessor {
           });
       } else {
         this.log.debug('generation.debug', { jobId, phase: 'publication' });
-        await this.storage.savePdf(jobId, join(output, result.filename), result.filename);
+        await this.storage.savePdf(
+          jobId,
+          join(output, result.filename),
+          result.filename,
+        );
         const finished = await finishJob(this.db, jobId, startedAt, {
           status: 'ok',
           message: 'PDF generated',
@@ -78,8 +110,14 @@ export class JobProcessor {
       // A lost database connection may leave the commit outcome unknown. Reconciliation owns cleanup then.
       const failed = await finishJob(this.db, jobId, startedAt, {
         status: 'failed',
-        message:
-          'Could not generate PDF. Check the template or contact the administrator.',
+        message: `${
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'COMPILER_TIMEOUT'
+            ? 'Generation timed out. Simplify the document or contact the administrator.'
+            : 'Could not generate PDF. Contact the administrator.'
+        } Job ID: ${jobId}`,
         pdfFilename: null,
       });
       if (failed.count === 1) {

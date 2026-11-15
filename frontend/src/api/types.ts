@@ -12,12 +12,16 @@ export interface AuthSession {
   csrfToken: string;
 }
 
-export interface ShapeField {
+export type FieldType = 'text' | 'longtext' | 'number' | 'boolean';
+
+interface ShapeFieldBase {
   variable: string;
   label: string;
-  type: 'text' | 'longtext' | 'number' | 'boolean';
   optional: boolean;
 }
+
+export type ShapeField = ShapeFieldBase &
+  ({ type: FieldType } | { type: 'list'; itemType: FieldType });
 
 export interface Template {
   id: string;

@@ -20,7 +20,9 @@ export function buildPreviewData(
         longtext: sampleParagraph,
         boolean: true,
       };
-      return [field.variable, values[field.type]];
+      const sample =
+        field.type === 'list' ? [values[field.itemType]] : values[field.type];
+      return [field.variable, sample];
     }),
   );
 }

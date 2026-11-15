@@ -15,7 +15,20 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ retry: [] }>();
 const informationOpen = ref(false);
+const informationButton = ref<HTMLButtonElement | null>(null);
 const informationId = useId();
+
+function handleInformationFocusOut(event: FocusEvent) {
+  const container = event.currentTarget as HTMLElement;
+  if (!container.contains(event.relatedTarget as Node | null)) {
+    informationOpen.value = false;
+  }
+}
+
+function dismissInformation() {
+  informationButton.value?.focus();
+  informationOpen.value = false;
+}
 
 const state = computed(() => {
   if (props.submitting) return 'generating';
@@ -75,8 +88,14 @@ const canDownload = computed(
       ></i>
       {{ statusText }}
     </span>
-    <span v-if="information" class="inline-flex">
+    <span
+      v-if="information"
+      class="inline-flex"
+      @focusout="handleInformationFocusOut"
+      @keydown.esc.stop.prevent="dismissInformation"
+    >
       <button
+        ref="informationButton"
         type="button"
         class="btn btn-ghost btn-square text-muted"
         aria-label="Generation information"
@@ -84,9 +103,7 @@ const canDownload = computed(
         :aria-expanded="informationOpen"
         @mouseenter="informationOpen = true"
         @focus="informationOpen = true"
-        @blur="informationOpen = false"
         @click="informationOpen = true"
-        @keydown.esc.stop.prevent="informationOpen = false"
       >
         <i class="fa-solid fa-info" aria-hidden="true"></i>
       </button>
@@ -94,7 +111,8 @@ const canDownload = computed(
         v-show="informationOpen"
         :id="informationId"
         role="tooltip"
-        class="absolute top-full right-3 left-3 z-20 rounded-box border border-outline bg-base-100 p-3 text-sm leading-relaxed font-normal text-base-content max-w-96 shadow-lg"
+        tabindex="0"
+        class="absolute top-full right-3 left-3 z-20 max-h-80 max-w-96 overflow-auto rounded-box border border-outline bg-base-100 p-3 text-sm leading-relaxed font-normal whitespace-pre-wrap break-words text-base-content shadow-lg"
         >{{ information }}</span
       >
     </span>

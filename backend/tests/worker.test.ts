@@ -163,6 +163,87 @@ it('does not expose private compiler diagnostics or leave PDFs on failure', asyn
   await expect(readdir(join(root, 'pdfs', jobId))).rejects.toThrow();
 });
 
+it.each(['input', 'templating', 'latex'])(
+  'retains owner-visible %s diagnostics after cleanup',
+  async (stage) => {
+    generate = async (_input, output) => {
+      await writeFile(
+        join(output, 'result.json'),
+        JSON.stringify({
+          result: 'failed',
+          filename: null,
+          stage,
+          message:
+            'template.tex:7\n! Undefined control sequence\nl.7 \\oops <script>document text</script>',
+        }),
+      );
+    };
+    await processor.processJob(jobId);
+    expect(job.status).toBe('failed');
+    expect(job.message).toContain(
+      stage === 'latex'
+        ? 'LaTeX'
+        : stage === 'templating'
+          ? 'Templating'
+          : 'Input',
+    );
+    expect(job.message).toContain('may contain document content');
+    expect(job.message).toContain('l.7 \\oops <script>document text</script>');
+    expect(await storage.jobInputExists(jobId)).toBe(false);
+    expect(JSON.stringify(logs.events)).not.toContain('document text');
+  },
+);
+
+it.each(['service', 'unknown'])('hides %s-stage diagnostics', async (stage) => {
+  generate = async (_input, output) => {
+    await writeFile(
+      join(output, 'result.json'),
+      JSON.stringify({
+        result: 'failed',
+        filename: null,
+        stage,
+        message: '/private/host SECRET',
+      }),
+    );
+  };
+  await processor.processJob(jobId);
+  expect(job.message).not.toContain('SECRET');
+  expect(job.message).not.toContain('/private');
+  expect(job.message).toContain(jobId);
+});
+
+it('bounds diagnostic text and removes terminal control sequences', async () => {
+  generate = async (_input, output) => {
+    await writeFile(
+      join(output, 'result.json'),
+      JSON.stringify({
+        result: 'failed',
+        filename: null,
+        stage: 'latex',
+        message:
+          '\u001b[31m' + '界'.repeat(10000) + '\u001b[0m\u0000\n! final error',
+      }),
+    );
+  };
+  await processor.processJob(jobId);
+  expect(job.message).toContain('[truncated]');
+  expect(job.message).toContain('! final error');
+  expect(job.message).not.toMatch(/[\u0000\u001b\ufffd]/u);
+  expect([...job.message].length).toBeLessThan(8400);
+});
+
+it('explains timeouts without exposing infrastructure exception text', async () => {
+  generate = async () => {
+    throw Object.assign(new Error('/private/host SECRET'), {
+      code: 'COMPILER_TIMEOUT',
+    });
+  };
+  await processor.processJob(jobId);
+  expect(job.message).toContain('timed out');
+  expect(job.message).toContain(jobId);
+  expect(job.message).not.toContain('SECRET');
+});
+
 it('reconciles interrupted jobs without rerunning and removes orphaned output/PDFs', async () => {
   job.status = 'generating';
   job.startedAt = new Date(0);

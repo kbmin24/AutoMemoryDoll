@@ -26,6 +26,31 @@ const template = () => ({
   manifest: { version: 1, shape },
 });
 beforeEach(() => {
+  // jsdom has no layout measurements for CodeMirror's focused selection.
+  Object.defineProperties(Range.prototype, {
+    getClientRects: { configurable: true, value: () => [] },
+    getBoundingClientRect: { configurable: true, value: () => new DOMRect() },
+  });
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.removeAttribute("open");
+        this.dispatchEvent(new Event("close"));
+      },
+    },
+  });
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  });
   calls = [];
   workspaceFiles = [
     { name: "template.tex", kind: "file", segments: ["template.tex"] },
@@ -231,19 +256,30 @@ it("protects template.tex and offers download rather than editing rejected binar
     "segments=logo.png",
   );
 });
-it("warns before discarding edits when selecting a file or leaving", async () => {
+it("uses a modal to cancel or confirm discarding file edits and navigation", async () => {
   const router = await open();
   await click("template.tex");
   await setEditorText(wrapper, "unsaved");
   await click("logo.png");
+  expect(
+    wrapper.get('[aria-labelledby="discard-title"]').attributes("open"),
+  ).toBeDefined();
+  await click("Cancel");
   expect(editorView(wrapper).state.doc.toString()).toBe("unsaved");
-  await router.push("/templates");
+  const navigation = router.push("/templates");
+  await flushPromises();
+  await click("Cancel");
+  await navigation;
   expect(router.currentRoute.value.path).toBe("/templates/letter/edit");
-  expect(window.confirm).toHaveBeenCalled();
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
+  await click("logo.png");
+  await click("Discard");
+  expect(wrapper.findComponent(CodeEditArea).exists()).toBe(false);
+  expect(window.confirm).not.toHaveBeenCalled();
 });
+
 it("creates files and folders, renames, moves, deletes with confirmation, and uploads multipart", async () => {
   await open();
   await click("Create ▾");
@@ -573,11 +609,12 @@ it("moves with drag/drop while retaining dirty guards and reporting failed reque
   await wrapper.get('[aria-label="parts"]').trigger("drop");
   await flushPromises();
   expect(mutation("POST", "/move")).toBeUndefined();
-  vi.mocked(window.confirm).mockReturnValue(true);
+  await click("Cancel");
   failSave = true;
   await drag();
   await wrapper.get('[aria-label="parts"]').trigger("drop");
   await flushPromises();
+  await click("Discard");
   expect(wrapper.text()).toContain("Storage limit exceeded");
   expect(editorView(wrapper).state.doc.toString()).toBe("unsaved");
 });
@@ -761,4 +798,200 @@ it("passes current shape variables only to the root Jinja editor and updates the
   await click("Files");
   await click("template.tex");
   expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([]);
+});
+
+it("saves and reloads a list base type and clears it when returning to a scalar", async () => {
+  await open();
+  await click("Data shape");
+  await wrapper.get('[aria-label="Type 1"]').setValue("list");
+  const base = wrapper.get('[aria-label="List item type 1"]');
+  expect(base.attributes("required")).toBeDefined();
+  expect(
+    base.findAll("option").map((option) => option.attributes("value")),
+  ).toEqual(["", "text", "longtext", "number", "boolean"]);
+  await base.setValue("number");
+  await click("Save shape");
+  const saved = JSON.parse(
+    String(mutation("PATCH", "/letter")!.init.body),
+  ).manifest;
+  expect(saved.shape.fields).toEqual([
+    { ...field, type: "list", itemType: "number" },
+  ]);
+  wrapper.unmount();
+  shape = saved.shape;
+  await open();
+  await click("Data shape");
+  expect(
+    (
+      wrapper.get('[aria-label="List item type 1"]')
+        .element as HTMLSelectElement
+    ).value,
+  ).toBe("number");
+  await click("Files");
+  await click("template.tex");
+  expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([
+    { label: "name", type: "variable", detail: "Name · List(of Number)" },
+  ]);
+  await click("Data shape");
+  await wrapper.get('[aria-label="Type 1"]').setValue("text");
+  expect(wrapper.find('[aria-label="List item type 1"]').exists()).toBe(false);
+  calls = [];
+  await click("Save shape");
+  expect(
+    JSON.parse(String(mutation("PATCH", "/letter")!.init.body)).manifest.shape
+      .fields,
+  ).toEqual([field]);
+});
+
+it("does not save a List field before a base type is chosen", async () => {
+  await open();
+  await click("Data shape");
+  await wrapper.get('[aria-label="Type 1"]').setValue("list");
+  await click("Save shape");
+  expect(mutation("PATCH", "/letter")).toBeUndefined();
+});
+
+it("warns after saving triple braces without changing the saved text", async () => {
+  await open();
+  await click("template.tex");
+  const source = "\\title{{{name}}}\n{{{\nother\n}}}";
+  await setEditorText(wrapper, source);
+  await click("Save file");
+  expect(JSON.parse(String(mutation("PUT", "/text")!.init.body)).text).toBe(
+    source,
+  );
+  const dialog = wrapper.get('[aria-labelledby="braces-warning-title"]');
+  expect(dialog.attributes("open")).toBeDefined();
+  expect(dialog.text()).toContain("{ {{...}} }");
+  expect(wrapper.text()).toContain("File saved.");
+  await click("OK");
+  expect(dialog.attributes("open")).toBeUndefined();
+  await setEditorText(wrapper, "{{{another}}}");
+  await click("Save file");
+  expect(dialog.attributes("open")).toBeDefined();
+});
+
+it("hides the braces warning for 30 days and shows it again at expiry", async () => {
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  await open();
+  await click("template.tex");
+  await setEditorText(wrapper, "{{{name}}}");
+  await click("Save file");
+  await wrapper
+    .get('[aria-label="Hide this message for 30 days"]')
+    .setValue(true);
+  await click("OK");
+  wrapper.unmount();
+  await open();
+  await click("template.tex");
+  await setEditorText(wrapper, "{{{hidden}}}");
+  await click("Save file");
+  const dialog = wrapper.get('[aria-labelledby="braces-warning-title"]');
+  expect(dialog.attributes("open")).toBeUndefined();
+  clock.mockReturnValue(now + 30 * 24 * 60 * 60 * 1000);
+  await setEditorText(wrapper, "{{{expired}}}");
+  await click("Save file");
+  expect(dialog.attributes("open")).toBeDefined();
+});
+
+it("does not warn for separated braces, support files, or failed saves", async () => {
+  await open();
+  await click("template.tex");
+  await setEditorText(wrapper, "{ {{name}} }");
+  await click("Save file");
+  const dialog = wrapper.get('[aria-labelledby="braces-warning-title"]');
+  expect(dialog.attributes("open")).toBeUndefined();
+  await setEditorText(wrapper, "{{{failed}}}");
+  failSave = true;
+  await click("Save file");
+  expect(dialog.attributes("open")).toBeUndefined();
+  failSave = false;
+  await click("logo.png");
+  await click("Discard");
+  await click("parts");
+  await click("header.tex");
+  await setEditorText(wrapper, "{{{support}}}");
+  await click("Save file");
+  expect(dialog.attributes("open")).toBeUndefined();
+});
+
+it("still saves and warns when browser storage is unavailable", async () => {
+  vi.stubGlobal("localStorage", {
+    getItem() {
+      throw new Error("Storage disabled");
+    },
+    setItem() {
+      throw new Error("Storage disabled");
+    },
+  });
+  await open();
+  await click("template.tex");
+  await setEditorText(wrapper, "{{{\nname\n}}}");
+  await click("Save file");
+  const dialog = wrapper.get('[aria-labelledby="braces-warning-title"]');
+  expect(dialog.attributes("open")).toBeDefined();
+  expect(wrapper.text()).toContain("File saved.");
+  await wrapper
+    .get('[aria-label="Hide this message for 30 days"]')
+    .setValue(true);
+  await click("OK");
+  expect(dialog.attributes("open")).toBeUndefined();
+  await setEditorText(wrapper, "{{{again}}}");
+  await click("Save file");
+  expect(dialog.attributes("open")).toBeDefined();
+});
+
+it.each([
+  ["Insert variable", "{{ var }}"],
+  ["Insert for loop", "{% for item in items %}\n  {{ item }}\n{% endfor %}"],
+  ["Insert if block", "{% if condition %}\n  \n{% endif %}"],
+])("%s replaces the selection and remains undoable", async (label, snippet) => {
+  await open();
+  await click("template.tex");
+  await setEditorText(wrapper, "before replace after");
+  const view = editorView(wrapper);
+  view.dispatch({ selection: { anchor: 7, head: 14 } });
+  await click(label);
+  expect(view.state.doc.toString()).toBe(`before ${snippet} after`);
+  expect(view.hasFocus).toBe(true);
+  expect(wrapper.text()).toContain("Unsaved changes");
+  expect(undo(view)).toBe(true);
+  expect(view.state.doc.toString()).toBe("before replace after");
+});
+
+it("shows snippet buttons only for the root template.tex", async () => {
+  await open();
+  expect(wrapper.find('[aria-label="Insert variable"]').exists()).toBe(false);
+  await click("template.tex");
+  expect(wrapper.find('[aria-label="Insert variable"]').exists()).toBe(true);
+  await click("parts");
+  await click("header.tex");
+  expect(wrapper.find('[aria-label="Insert variable"]').exists()).toBe(false);
+});
+
+it("opens and closes the syntax guide without changing the editor", async () => {
+  await open();
+  expect(wrapper.find('[aria-label="Open syntax guide"]').exists()).toBe(false);
+  await click("template.tex");
+  await setEditorText(wrapper, "unsaved document");
+  await click("Open syntax guide");
+  const dialog = wrapper.get('[aria-labelledby="syntax-guide-title"]');
+  expect(dialog.classes()).toContain("modal");
+  expect(dialog.attributes("open")).toBeDefined();
+  expect(
+    dialog.get('[aria-label="Template syntax reference"]').classes(),
+  ).toContain("overflow-y-auto");
+  expect(dialog.text()).toContain("{{ var }}");
+  expect(dialog.text()).toContain("{ {{ var }} }");
+  expect(dialog.text()).toContain("{% for item in items %}");
+  expect(dialog.text()).toContain("{% if condition %}");
+  expect(dialog.text()).toContain("|safe");
+  await click("Close guide");
+  expect(dialog.attributes("open")).toBeUndefined();
+  expect(editorView(wrapper).state.doc.toString()).toBe("unsaved document");
+  await click("Save file");
+  await click("parts");
+  await click("header.tex");
+  expect(wrapper.find('[aria-label="Open syntax guide"]').exists()).toBe(false);
 });

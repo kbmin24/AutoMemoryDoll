@@ -43,7 +43,11 @@ const editorVariables = computed(() => {
     .map((field) => ({
       label: field.variable,
       type: "variable",
-      detail: `${field.label} · ${field.type}`,
+      detail: `${field.label} · ${
+        field.type === "list"
+          ? `List(of ${field.itemType === "longtext" ? "Long text" : field.itemType.charAt(0).toUpperCase() + field.itemType.slice(1)})`
+          : field.type
+      }`,
     }));
 });
 const text = ref("");
@@ -62,6 +66,21 @@ const draft = ref<{
   entry?: TreeEntry;
 } | null>(null);
 const fileTree = ref<InstanceType<typeof FileTree>>();
+const textEditor = ref<InstanceType<typeof TextEditor>>();
+const syntaxGuideDialog = ref<HTMLDialogElement>();
+const templateSnippets = [
+  { label: "Insert variable", icon: "fa-code", source: "{{ var }}" },
+  {
+    label: "Insert for loop",
+    icon: "fa-repeat",
+    source: "{% for item in items %}\n  {{ item }}\n{% endfor %}",
+  },
+  {
+    label: "Insert if block",
+    icon: "fa-code-branch",
+    source: "{% if condition %}\n  \n{% endif %}",
+  },
+];
 const createMenuOpen = ref(false);
 const createMenu = ref<HTMLElement>();
 const uploadInput = ref<HTMLInputElement>();
@@ -97,8 +116,26 @@ function query(segments: string[]) {
   segments.forEach((segment) => params.append("segments", segment));
   return params.toString();
 }
+const discardDialog = ref<HTMLDialogElement>();
+const discardMessage = ref("");
+let resolveDiscard: ((confirmed: boolean) => void) | undefined;
+function confirmDiscard(message: string): Promise<boolean> {
+  if (resolveDiscard) return Promise.resolve(false);
+  discardMessage.value = message;
+  return new Promise((resolve) => {
+    resolveDiscard = resolve;
+    discardDialog.value!.showModal();
+  });
+}
+function finishDiscard(confirmed = false) {
+  const resolve = resolveDiscard;
+  resolveDiscard = undefined;
+  if (discardDialog.value?.open) discardDialog.value.close();
+  resolve?.(confirmed);
+}
+onUnmounted(() => finishDiscard());
 function discard() {
-  return !dirty.value || window.confirm("Discard unsaved changes?");
+  return !dirty.value || confirmDiscard("Discard unsaved changes?");
 }
 onBeforeRouteLeave(() => !busy.value && discard());
 onBeforeRouteUpdate(() => !busy.value && discard());
@@ -175,6 +212,12 @@ function validateShape() {
       throw new Error(
         "Each field needs a display name of up to 200 characters.",
       );
+    if (
+      field.type === "list" &&
+      !["text", "longtext", "number", "boolean"].includes(field.itemType)
+    ) {
+      throw new Error("Choose a base type for each list.");
+    }
     seen.add(field.variable);
   }
 }
@@ -226,12 +269,42 @@ async function showEntry(entry: TreeEntry, openText = true) {
   }
 }
 async function select(entry: TreeEntry) {
-  if (fileDirty.value && !window.confirm("Discard unsaved file changes?"))
+  if (
+    fileDirty.value &&
+    !(await confirmDiscard("Discard unsaved file changes?"))
+  )
     return;
   await perform(async () => {
     draft.value = null;
     await showEntry(entry);
   }, "");
+}
+const bracesWarningDialog = ref<HTMLDialogElement>();
+const hideBracesWarning = ref(false);
+const bracesWarningStorageKey = "automemorydoll.braces-warning-hidden-until";
+function warnAboutTripleBraces(source: string) {
+  if (!/\{\{\{[\s\S]*?\}\}\}/.test(source)) return;
+  try {
+    const hiddenUntil = Number(
+      window.localStorage.getItem(bracesWarningStorageKey),
+    );
+    if (Number.isFinite(hiddenUntil) && hiddenUntil > Date.now()) return;
+  } catch {
+    // Storage restrictions must not prevent saving or showing the warning.
+  }
+  hideBracesWarning.value = false;
+  bracesWarningDialog.value?.showModal();
+}
+function dismissBracesWarning() {
+  if (hideBracesWarning.value) {
+    try {
+      const hiddenUntil = Date.now() + 30 * 24 * 60 * 60 * 1000;
+      window.localStorage.setItem(bracesWarningStorageKey, String(hiddenUntil));
+    } catch {
+      // The warning remains enabled when browser storage is unavailable.
+    }
+  }
+  bracesWarningDialog.value?.close();
 }
 async function saveFile() {
   if (!selected.value || !editable.value) return;
@@ -243,6 +316,9 @@ async function saveFile() {
       text: text.value,
     });
     savedText.value = text.value;
+    if (selected.value!.segments.join("/") === "template.tex") {
+      warnAboutTripleBraces(savedText.value);
+    }
   }, "File saved.");
 }
 function pathSegments(value: string) {
@@ -280,10 +356,13 @@ onUnmounted(() => {
   document.removeEventListener("scroll", dismissCreateMenu, true);
   window.removeEventListener("resize", dismissCreateMenu);
 });
-function startCreation(kind: "file" | "directory" | "upload") {
+async function startCreation(kind: "file" | "directory" | "upload") {
   createMenuOpen.value = false;
   if (busy.value) return;
-  if (fileDirty.value && !window.confirm("Discard unsaved file changes?"))
+  if (
+    fileDirty.value &&
+    !(await confirmDiscard("Discard unsaved file changes?"))
+  )
     return;
   error.value = status.value = "";
   creationText = text.value;
@@ -316,7 +395,7 @@ async function createItem(name: string) {
   if (
     fileDirty.value &&
     text.value !== creationText &&
-    !window.confirm("Discard unsaved file changes?")
+    !(await confirmDiscard("Discard unsaved file changes?"))
   )
     return;
   const { kind, parent, entry } = draft.value;
@@ -346,7 +425,7 @@ async function chooseUpload(event: Event) {
   if (
     fileDirty.value &&
     text.value !== creationText &&
-    !window.confirm("Discard unsaved file changes?")
+    !(await confirmDiscard("Discard unsaved file changes?"))
   )
     return;
   let uploadName = file.name;
@@ -380,9 +459,12 @@ async function chooseUpload(event: Event) {
     await showEntry({ name: uploadName, kind: "file", segments }, false);
   }, "Workspace updated.");
 }
-function startFileAction(action: "rename" | "delete", entry: TreeEntry) {
+async function startFileAction(action: "rename" | "delete", entry: TreeEntry) {
   if (busy.value || entry.segments.join("/") === "template.tex") return;
-  if (fileDirty.value && !window.confirm("Discard unsaved file changes?"))
+  if (
+    fileDirty.value &&
+    !(await confirmDiscard("Discard unsaved file changes?"))
+  )
     return;
   draft.value = null;
   creationText = text.value;
@@ -399,7 +481,10 @@ function startFileAction(action: "rename" | "delete", entry: TreeEntry) {
 }
 async function moveEntry(entry: TreeEntry, parent: string[]) {
   if (busy.value || entry.segments.join("/") === "template.tex") return;
-  if (fileDirty.value && !window.confirm("Discard unsaved file changes?"))
+  if (
+    fileDirty.value &&
+    !(await confirmDiscard("Discard unsaved file changes?"))
+  )
     return;
   await perform(async () => {
     if (
@@ -442,7 +527,7 @@ async function fileAction(
   if (
     fileDirty.value &&
     text.value !== creationText &&
-    !window.confirm("Discard unsaved file changes?")
+    !(await confirmDiscard("Discard unsaved file changes?"))
   )
     return;
   if (
@@ -681,9 +766,46 @@ async function fileAction(
               :class="{ 'max-workspace:hidden': mobilePane !== 'editor' }"
               class="workspace-editor rounded-box workspace:rounded-l-none flex min-h-0 min-w-0 flex-col gap-3 overflow-auto p-4 workspace:p-4"
             >
-              <h2 class="mb-0 shrink-0">
-                {{ selected?.segments.join("/") || "Text editor" }}
-              </h2>
+              <div class="flex shrink-0 flex-wrap items-center gap-2">
+                <h2 class="mb-0 min-w-0 break-all">
+                  {{ selected?.segments.join("/") || "Text editor" }}
+                </h2>
+                <div
+                  v-if="
+                    editable && selected?.segments.join('/') === 'template.tex'
+                  "
+                  class="flex items-center gap-1"
+                  role="group"
+                  aria-label="Insert template boilerplate"
+                >
+                  <button
+                    v-for="snippet in templateSnippets"
+                    :key="snippet.label"
+                    type="button"
+                    class="btn btn-ghost btn-sm btn-square"
+                    :aria-label="snippet.label"
+                    :title="snippet.label"
+                    :disabled="busy"
+                    @click="textEditor?.insertSnippet(snippet.source)"
+                  >
+                    <i
+                      class="fa-solid"
+                      :class="snippet.icon"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm btn-square"
+                    aria-label="Open syntax guide"
+                    title="Syntax guide"
+                    aria-haspopup="dialog"
+                    @click="syntaxGuideDialog?.showModal()"
+                  >
+                    <i class="fa-solid fa-question" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </div>
               <ImagePreview
                 v-if="imagePreviewUrl && selected"
                 :key="previewVersion"
@@ -692,6 +814,7 @@ async function fileAction(
               />
               <TextEditor
                 v-else-if="editable"
+                ref="textEditor"
                 :key="selected?.segments.join('/')"
                 v-model="text"
                 :lang="editorLanguage"
@@ -713,5 +836,168 @@ async function fileAction(
         </section>
       </template>
     </template>
+    <dialog
+      ref="syntaxGuideDialog"
+      class="modal"
+      aria-labelledby="syntax-guide-title"
+    >
+      <div
+        class="modal-box flex max-h-[85dvh] w-11/12 max-w-2xl flex-col overflow-hidden"
+      >
+        <h2 id="syntax-guide-title" class="mb-4 shrink-0 text-lg font-bold">
+          Template syntax guide
+        </h2>
+        <div
+          class="min-h-0 space-y-6 overflow-y-auto pr-2 [&_h3]:mb-2 [&_h3]:font-semibold [&_pre]:overflow-x-auto [&_pre]:rounded-box [&_pre]:bg-base-200 [&_pre]:p-3 [&_pre]:text-sm"
+          role="region"
+          aria-label="Template syntax reference"
+          tabindex="0"
+          v-pre
+        >
+          <p>
+            The root template.tex combines LaTeX with MiniJinja. Use the
+            variable names defined in Data shape. Replace the example names
+            below with yours.
+          </p>
+          <section>
+            <h3>Variables</h3>
+            <p>
+              Double braces insert a value. Text values are escaped for LaTeX
+              automatically.
+            </p>
+            <pre><code>{{ var }}</code></pre>
+          </section>
+          <section>
+            <h3>LaTeX braces around variables</h3>
+            <p>
+              Separate the LaTeX braces from the variable delimiters with
+              spaces. Use { {{ var }} } instead of {{{var}}}.
+            </p>
+            <pre><code>\title{ {{ title }} }
+\section{ {{ heading }} }</code></pre>
+          </section>
+          <section>
+            <h3>For loops and lists</h3>
+            <p>
+              Repeat a block for every item in a list. The item name refers to
+              the current value.
+            </p>
+            <pre><code>{% for item in items %}
+  {{ item }}
+{% endfor %}</code></pre>
+          </section>
+          <section>
+            <h3>If, elif, and else</h3>
+            <p>
+              Choose content based on a boolean or another condition. The elif
+              and else branches are optional.
+            </p>
+            <pre><code>{% if condition %}
+  Shown when the condition is true.
+{% elif other_condition %}
+  Shown when the other condition is true.
+{% else %}
+  Shown otherwise.
+{% endif %}</code></pre>
+          </section>
+          <section>
+            <h3>Comments</h3>
+            <p>Template comments are removed before LaTeX compilation.</p>
+            <pre><code>{# This comment is not included in the document. #}</code></pre>
+          </section>
+          <section>
+            <h3>Literal template syntax</h3>
+            <p>
+              Use a raw block when you want to leave template delimiters
+              uninterpreted.
+            </p>
+            <pre><code>{% raw %}
+{{ this_is_not_a_variable }}
+{% endraw %}</code></pre>
+          </section>
+          <section>
+            <h3>Raw LaTeX with |safe</h3>
+            <p>
+              Use |safe only when a value intentionally contains raw LaTeX. It
+              disables the normal LaTeX escaping for that value.
+            </p>
+            <pre><code>{{ tex_content |safe }}</code></pre>
+          </section>
+        </div>
+        <div class="modal-action shrink-0">
+          <button
+            type="button"
+            class="btn btn-primary"
+            autofocus
+            @click="syntaxGuideDialog?.close()"
+          >
+            Close guide
+          </button>
+        </div>
+      </div>
+    </dialog>
+    <dialog
+      ref="bracesWarningDialog"
+      class="modal"
+      aria-labelledby="braces-warning-title"
+      aria-describedby="braces-warning-description"
+      @cancel.prevent="dismissBracesWarning"
+    >
+      <div class="modal-box">
+        <h2 id="braces-warning-title" class="text-lg font-bold">
+          Check variable braces
+        </h2>
+        <p id="braces-warning-description" v-pre>
+          Your file was saved. It contains {{{...}}}. For variables wrapped in
+          LaTeX braces, use { {{...}} } with spaces between the outer braces and
+          the variable delimiters.
+        </p>
+        <label class="mt-4 flex items-center gap-2">
+          <input
+            v-model="hideBracesWarning"
+            type="checkbox"
+            class="checkbox"
+            aria-label="Hide this message for 30 days"
+          />
+          Hide this message for 30 days
+        </label>
+        <div class="modal-action">
+          <button
+            type="button"
+            class="btn btn-primary"
+            autofocus
+            @click="dismissBracesWarning"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </dialog>
+    <dialog
+      ref="discardDialog"
+      class="modal"
+      aria-labelledby="discard-title"
+      @cancel.prevent="finishDiscard()"
+      @close="finishDiscard()"
+    >
+      <div class="modal-box">
+        <h2 id="discard-title" class="text-lg font-bold">
+          {{ discardMessage }}
+        </h2>
+        <p>Your unsaved changes will be lost.</p>
+        <div class="modal-action">
+          <button type="button" class="btn" autofocus @click="finishDiscard()">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            @click="finishDiscard(true)"
+          >
+            Discard
+          </button>
+        </div>
+      </div>
+    </dialog>
   </div>
 </template>

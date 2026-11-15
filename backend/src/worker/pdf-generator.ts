@@ -3,13 +3,19 @@ import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateId } from '../storage/paths.js';
 
+export type FailureStage = 'input' | 'templating' | 'latex' | 'service';
+type CompilerFailure = {
+  result: 'failed';
+  filename: null;
+  message: string;
+  stage?: FailureStage;
+};
+
 export type CompilerResult =
-  | { result: 'ok'; filename: string; message: string }
-  | { result: 'failed'; filename: null; message: string };
+  { result: 'ok'; filename: string; message: string } | CompilerFailure;
 
 export type PreviewResult =
-  | { result: 'ok'; filename: 'preview.webp'; message: string }
-  | { result: 'failed'; filename: null; message: string };
+  { result: 'ok'; filename: 'preview.webp'; message: string } | CompilerFailure;
 
 export abstract class PdfGenerator {
   abstract generate(
@@ -51,7 +57,20 @@ export abstract class PdfGenerator {
       if (typeof result.message !== 'string')
         throw new Error('Invalid compiler message');
       if (result.result === 'failed' && result.filename === null) {
-        return { result: 'failed', filename: null, message: result.message };
+        if (
+          result.stage !== undefined &&
+          !['input', 'templating', 'latex', 'service'].includes(
+            result.stage as string,
+          )
+        ) {
+          throw new Error('Invalid compiler failure stage');
+        }
+        return {
+          result: 'failed',
+          filename: null,
+          message: result.message,
+          stage: result.stage as FailureStage | undefined,
+        };
       }
       if (preview) {
         if (result.result !== 'ok' || result.filename !== 'preview.webp')

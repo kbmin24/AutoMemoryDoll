@@ -44,10 +44,21 @@ export class PreviewProcessor {
       const main = files.find(
         (file) => file.path === join(input, 'template', 'template.tex'),
       );
-      if (
-        !main?.text.trim() ||
-        findResourceAliases(files.map((file) => file.text)).length
-      ) {
+      const requiresResources =
+        findResourceAliases(files.map((file) => file.text)).length > 0;
+      if (requiresResources) {
+        await withTemplateLock(
+          this.db,
+          this.storage,
+          templateId,
+          null,
+          async () => {},
+          async () => {
+            await this.storage.removeTemplatePreview(templateId);
+          },
+        );
+      }
+      if (!main?.text.trim() || requiresResources) {
         this.logger.warn('preview.rejected', {
           templateId,
           jobId: runId,

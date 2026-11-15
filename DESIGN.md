@@ -27,9 +27,13 @@ The owner approved the Noto Sans mockup and explicitly confirmed that this desig
 - On 2026-11-13, the owner requested a Generate-specific fork of the job-result component: a PDF viewer with one horizontal status bar containing Ready, Generating... (daisyUI loading spinner), Generated (Font Awesome check), or Error (Font Awesome x). Use a grey background for ready/in-progress, pale red for errors, and pale green for successful generation. Put contextual information behind a muted Font Awesome info control, available on hover, focus, and touch, and omit it when no relevant information exists. Keep an icon-only download control at the right. On 2026-11-14, the owner moved the bar into the top of the right-hand PDF viewer (and the Preview pane on mobile), superseding its earlier full-width placement; remove the duplicated status text, preview heading, and metadata blocks from this screen. On 2026-11-14, the owner approved the same compact presentation for job details: share JobStatusBar between both PDF preview components, use Generated instead of ok, move the confirmation and submission timestamp into the information tooltip, and place the icon-only download at the right. The job-detail preview fills its workspace; the history list is unchanged.
 - On 2026-11-14, the owner selected a shared `CodeEditArea` component using vue-codemirror and CodeMirror 6 to replace the workspace and generation JSON textareas. Its optional `lang` prop accepts `latex`, `jinja-latex`, and `javascript` (also used to highlight JSON); an omitted language keeps plain-text editing. Only the root `template.tex` uses Jinja over LaTeX. Other `.tex`, `.ltx`, `.cls`, `.sty`, `.dtx`, `.ins`, `.def`, and `.clo` files use LaTeX; `.json`, `.jsonc`, `.js`, `.mjs`, and `.cjs` use JavaScript. Other UTF-8 files stay editable as plain text. Use the official Jinja and JavaScript language extensions alongside the installed LaTeX package, with no extra TeX linting or rewriting. Preserve save/dirty controls, busy-state editing restrictions, JSON object validation, and separate undo history for each selected file. Tab leaves the editor instead of trapping keyboard focus. This changes editor presentation only; compiler templating still applies solely to the root `template.tex`.
 - On 2026-11-14, the owner approved autocomplete suggestions for current data-shape variables while editing the root `template.tex`. Suggestions show the variable name with its display label and type, update as the shape changes, and are absent for other files or a disabled shape. Blank/invalid draft variable names are omitted. Use the existing Jinja completion configuration, preserving the document, undo history, and ordinary Jinja built-ins and local variables. Suggestions do not restrict which variables authors may type and do not change compiler behavior.
+- On 2026-11-15, the owner requested a DaisyUI warning after successfully saving the root `template.tex` when it contains `{{{...}}}`. Explain that variables wrapped in TeX braces must use `{ {{...}} }`. Save the original text unchanged. Include an OK button and a checkbox to hide the warning for 30 days in the current browser; show it again after expiry. This is an advisory pattern check, not template validation.
+- On 2026-11-15, the owner requested Font Awesome buttons beside the root `template.tex` filename to insert variable, for-loop, and if-block boilerplates. Insert at the cursor or replace the selection using the existing editor, preserving undo and unsaved-change tracking.
+- On 2026-11-15, the owner requested a Font Awesome question-mark button beside the template boilerplate controls, opening a scrollable syntax-guide modal. Keep the guide title and Close control visible while its reference content scrolls.
 - The interface must be mobile friendly. Desktop side-by-side workspaces become tabbed interfaces on mobile. Successful document generation automatically switches to the preview tab on mobile. Breakpoints and behavior after a failed generation remain open.
+- On 2026-11-15, the owner requested a visual cue on empty required controls and a note beside the parameter name in Document values. Show a red border and a `Required` note for missing values only after the user clicks Generate PDF, clearing them as values are filled. Apply the same cue to empty required lists and blank list items; zero and false count as filled values. Existing generation validation is unchanged.
 - Give screens a little more breathing room, with comfortable controls and clear separation between sections. Use the approved mockup's spacing as the reference.
-- Generation failures show a short explanation with expandable technical details. This presentation choice does not expand the backend's public error contract; the content available for those details remains to be determined.
+- Generation failures show a short explanation with expandable technical details. On 2026-11-14, the owner approved showing the failure stage and bounded MiniJinja/TeX diagnostics in JobStatusBar's existing information section on generation and job-detail screens. Diagnostics may contain the job's document text and submitted values; label that possibility and retain them with the private job. Existing job-owner authorization applies, including after template deletion. Keep Docker/backend errors, host paths, credentials, database/Redis information, environment variables, and backend stacks out of responses. Infrastructure failures show a safe explanation and job ID; container paths and template-relative filenames may remain visible. Do not promise arbitrary secret redaction from document/compiler text.
 
 This document records decisions made with the project owner and identifies work that remains undecided. It is not an implementation plan. Do not infer approval of a technology or feature merely because it appears in the context section.
 
@@ -253,8 +257,12 @@ through the same low-priority preview queue.
 
 The owner selected retaining the last successful preview after edits, while a
 replacement is pending, and if replacement generation fails. A template with no
-successful preview shows an unavailable state. Missing required resources prevent
-a new preview from being generated; they do not remove a retained old preview.
+successful preview shows an unavailable state. On 2026-11-14, the owner changed
+the resource exception: when a scheduled preview detects `@resource(...)` in the
+template files, remove any retained thumbnail to avoid showing a misleading
+document. Resource-dependent templates remain unavailable until the tokens are
+removed and a subsequent preview succeeds. The existing scheduling delay and
+card refresh on list reload/re-entry still apply.
 
 When required per-job resource uploads are missing, the preview is unavailable;
 do not add sample resource uploads for previews. Workspace support files remain
@@ -330,6 +338,19 @@ not additional scheduling state. See the approved
 [template preview design](docs/superpowers/specs/2026-11-14-template-previews-design.md),
 which also settles the sample paragraph, inclusion of optional fields, container
 rendering commands, output size cap, best-effort queue scheduling, and backfill.
+
+### List data-shape fields: approved on 2026-11-14
+
+The owner approved adding `List` to the data-shape type selector. Selecting it
+reveals a required base-type selector for Text, Long text, Number, or Boolean.
+Generation uses individual inputs with Add item and Remove controls. Required
+lists contain at least one item; empty optional lists are omitted. Every item
+must match its base type. Nested lists are excluded. The compiler receives an
+ordinary JSON array, usable with MiniJinja loops. Automatic previews contain one
+sample item using the existing sample value for the selected base type.
+
+This supersedes the earlier four-type-only restriction. Existing scalar fields
+retain their current behavior. See the [list field design](docs/superpowers/specs/2026-11-14-list-fields-design.md).
 
 ### Remaining project decisions
 

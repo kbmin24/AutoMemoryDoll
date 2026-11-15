@@ -61,6 +61,14 @@ pub fn write_success(output: &Path, pdf: &[u8]) -> Result<PathBuf, OutputError> 
 }
 
 pub fn write_failure(output: &Path, message: &str) -> Result<(), OutputError> {
+    write_failure_at_stage(output, message, None)
+}
+
+pub fn write_failure_at_stage(
+    output: &Path,
+    message: &str,
+    stage: Option<&str>,
+) -> Result<(), OutputError> {
     fs::create_dir_all(output)?;
     for entry in fs::read_dir(output)? {
         let entry = entry?;
@@ -72,7 +80,18 @@ pub fn write_failure(output: &Path, message: &str) -> Result<(), OutputError> {
             fs::remove_file(entry.path())?;
         }
     }
-    write_manifest(output, "failed", None, message)
+    let characters: Vec<_> = message.chars().collect();
+    let bounded = if characters.len() > 8000 {
+        format!(
+            "[truncated]\n{}",
+            characters[characters.len() - 7988..]
+                .iter()
+                .collect::<String>()
+        )
+    } else {
+        message.to_owned()
+    };
+    write_manifest_at_stage(output, "failed", None, &bounded, stage)
 }
 
 pub(crate) fn write_manifest(
@@ -81,11 +100,25 @@ pub(crate) fn write_manifest(
     filename: Option<&str>,
     message: &str,
 ) -> Result<(), OutputError> {
-    let bytes = serde_json::to_vec(&json!({
+    write_manifest_at_stage(output, result, filename, message, None)
+}
+
+fn write_manifest_at_stage(
+    output: &Path,
+    result: &str,
+    filename: Option<&str>,
+    message: &str,
+    stage: Option<&str>,
+) -> Result<(), OutputError> {
+    let mut manifest = json!({
         "result": result,
         "filename": filename,
         "message": message,
-    }))?;
+    });
+    if let Some(stage) = stage {
+        manifest["stage"] = json!(stage);
+    }
+    let bytes = serde_json::to_vec(&manifest)?;
     let temp = output.join(format!(".result-{}.tmp", Uuid::new_v4()));
     let result = (|| {
         write_new_file(&temp, &bytes)?;

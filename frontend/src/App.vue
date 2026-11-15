@@ -162,7 +162,6 @@ async function signOut() {
   flex: 1;
 }
 .workspace-shell main {
-  padding-block: 1rem;
   display: flex;
   height: 100%;
   min-height: 0;

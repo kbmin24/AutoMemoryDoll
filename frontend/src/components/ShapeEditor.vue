@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Template, ShapeField } from '../api/types';
+import type { FieldType, Template, ShapeField } from '../api/types';
 const manifest = defineModel<Template['manifest']>({ required: true });
 defineProps<{ disabled?: boolean }>();
 function enable(event: Event) {
@@ -10,10 +10,25 @@ function enable(event: Event) {
       : null,
   };
 }
-function update(index: number, key: keyof ShapeField, value: string | boolean) {
+function update(
+  index: number,
+  key: keyof ShapeField | 'itemType',
+  value: string | boolean,
+) {
   const fields = manifest.value.shape!.fields.map((field, position) =>
     position === index ? { ...field, [key]: value } : field,
   );
+  manifest.value = { version: 1, shape: { fields } };
+}
+function changeType(index: number, type: ShapeField['type']) {
+  const { variable, label, optional } = manifest.value.shape!.fields[index];
+  // A list draft stays unsaveable until the author chooses its base type.
+  const field: ShapeField =
+    type === 'list'
+      ? { variable, label, optional, type, itemType: '' as FieldType }
+      : { variable, label, optional, type };
+  const fields = [...manifest.value.shape!.fields];
+  fields[index] = field;
   manifest.value = { version: 1, shape: { fields } };
 }
 function add() {
@@ -100,15 +115,42 @@ function remove(index: number) {
             :aria-label="`Type ${index + 1}`"
             :value="field.type"
             @change="
-              update(index, 'type', ($event.target as HTMLSelectElement).value)
+              changeType(
+                index,
+                ($event.target as HTMLSelectElement)
+                  .value as ShapeField['type'],
+              )
             "
           >
             <option value="text">Text</option>
             <option value="longtext">Long text</option>
             <option value="number">Number</option>
             <option value="boolean">Boolean</option>
+            <option value="list">List</option>
           </select></label
         >
+        <label v-if="field.type === 'list'">
+          List item type
+          <select
+            class="select min-h-11 w-full min-w-0"
+            :aria-label="`List item type ${index + 1}`"
+            :value="field.itemType"
+            required
+            @change="
+              update(
+                index,
+                'itemType',
+                ($event.target as HTMLSelectElement).value,
+              )
+            "
+          >
+            <option value="" disabled>Choose a base type</option>
+            <option value="text">Text</option>
+            <option value="longtext">Long text</option>
+            <option value="number">Number</option>
+            <option value="boolean">Boolean</option>
+          </select>
+        </label>
         <label class="mb-2 flex items-center gap-2.5"
           ><input
             class="checkbox checkbox-primary shrink-0"

@@ -78,6 +78,81 @@ describe('generation data validation', () => {
   });
 });
 
+describe('list generation data', () => {
+  const manifest = (
+    itemType: 'text' | 'longtext' | 'number' | 'boolean',
+    optional = false,
+  ): ManifestV1 => ({
+    version: 1,
+    shape: {
+      fields: [
+        { variable: 'items', label: 'Items', type: 'list', itemType, optional },
+      ],
+    },
+  });
+
+  it('preserves typed lists, including zero and false', () => {
+    for (const [itemType, items] of [
+      ['text', ['first', 'second']],
+      ['longtext', ['first\nsecond']],
+      ['number', [0, 1.5]],
+      ['boolean', [false, true]],
+    ] as const) {
+      expect(validateGenerationData(manifest(itemType), { items })).toEqual({
+        items,
+      });
+    }
+  });
+
+  it('requires a nonempty required list and omits empty optional lists', () => {
+    expect(
+      validateGenerationData(manifest('text', true), { items: [] }),
+    ).toEqual({});
+    expect(validateGenerationData(manifest('text', true), {})).toEqual({});
+    for (const items of [undefined, [], '', null, 'hello', {}]) {
+      expect(() =>
+        validateGenerationData(manifest('text'), { items }),
+      ).toThrow();
+    }
+  });
+
+  it('rejects invalid and nested items without coercion', () => {
+    for (const optional of [false, true]) {
+      for (const itemType of [
+        'text',
+        'longtext',
+        'number',
+        'boolean',
+      ] as const) {
+        for (const item of [null, [], {}, undefined]) {
+          expect(() =>
+            validateGenerationData(manifest(itemType, optional), {
+              items: [item],
+            }),
+          ).toThrow();
+        }
+      }
+      for (const itemType of ['text', 'longtext'] as const) {
+        for (const items of [[''], ['   '], ['valid', false]]) {
+          expect(() =>
+            validateGenerationData(manifest(itemType, optional), { items }),
+          ).toThrow();
+        }
+      }
+      for (const items of [[Infinity], [NaN], [1, '2'], [true]]) {
+        expect(() =>
+          validateGenerationData(manifest('number', optional), { items }),
+        ).toThrow();
+      }
+      expect(() =>
+        validateGenerationData(manifest('boolean', optional), {
+          items: [false, 'true'],
+        }),
+      ).toThrow();
+    }
+  });
+});
+
 describe('resource tokens', () => {
   it('finds unique aliases across text files and rewrites only supplied text', () => {
     const files = [

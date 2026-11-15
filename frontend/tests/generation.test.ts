@@ -240,9 +240,17 @@ describe('single generation', () => {
 
   it('rejects missing required values and files before submission', async () => {
     await open();
+    expect(wrapper!.find('[aria-invalid="true"]').exists()).toBe(false);
+    expect(wrapper!.find('#field-name-required').exists()).toBe(false);
     await submit();
+    expect(wrapper!.get('#field-name').attributes('aria-invalid')).toBe('true');
+    expect(wrapper!.get('#field-name-required').text()).toBe('Required');
     expect(wrapper!.get('[role=alert]').text()).toContain('Name');
     await wrapper!.get('#field-name').setValue('Ada');
+    expect(
+      wrapper!.get('#field-name').attributes('aria-invalid'),
+    ).toBeUndefined();
+    expect(wrapper!.find('#field-name-required').exists()).toBe(false);
     await wrapper!.get('#field-count').setValue('1');
     await submit();
     expect(wrapper!.get('[role=alert]').text()).toContain('logo');
@@ -425,5 +433,149 @@ describe('retained jobs', () => {
       false,
     );
     expect(calls.some((c) => c.path.startsWith('/api/templates'))).toBe(false);
+  });
+});
+
+describe('list generation', () => {
+  function lists() {
+    fields = [
+      {
+        variable: 'names',
+        label: 'Names',
+        type: 'list',
+        itemType: 'text',
+        optional: false,
+      },
+      {
+        variable: 'notes',
+        label: 'Notes',
+        type: 'list',
+        itemType: 'longtext',
+        optional: true,
+      },
+      {
+        variable: 'counts',
+        label: 'Counts',
+        type: 'list',
+        itemType: 'number',
+        optional: false,
+      },
+      {
+        variable: 'flags',
+        label: 'Flags',
+        type: 'list',
+        itemType: 'boolean',
+        optional: false,
+      },
+    ];
+  }
+  async function add(variable: string) {
+    await wrapper!
+      .get(`#field-${variable}`)
+      .get('button[data-add-item]')
+      .trigger('click');
+  }
+  it('adds and removes typed inputs and submits arrays with zero and false', async () => {
+    lists();
+    await open();
+    await add('names');
+    await add('names');
+    await add('names');
+    let inputs = wrapper!.findAll('#field-names input');
+    await inputs[0].setValue('Ada');
+    await inputs[1].setValue('remove me');
+    await inputs[2].setValue('Grace');
+    const lastElement = inputs[2].element;
+    await wrapper!
+      .findAll('#field-names button[data-remove-item]')[1]
+      .trigger('click');
+    inputs = wrapper!.findAll('#field-names input');
+    expect(
+      inputs.map((input) => (input.element as HTMLInputElement).value),
+    ).toEqual(['Ada', 'Grace']);
+    expect(inputs[1].element).toBe(lastElement);
+    await add('notes');
+    await wrapper!.get('#field-notes textarea').setValue('Long\ntext');
+    await add('counts');
+    await wrapper!.get('#field-counts input').setValue('0');
+    await add('flags');
+    await wrapper!.get('#field-flags select').setValue('false');
+    await upload();
+    await submit();
+    const body = calls.find((call) => call.path.endsWith('/generations'))!.init
+      .body as FormData;
+    expect(JSON.parse(String(body.get('data')))).toEqual({
+      names: ['Ada', 'Grace'],
+      notes: ['Long\ntext'],
+      counts: [0],
+      flags: [false],
+    });
+  });
+
+  it('rejects empty required lists and blank items but omits empty optional lists', async () => {
+    fields = [
+      {
+        variable: 'items',
+        label: 'Items',
+        type: 'list',
+        itemType: 'text',
+        optional: false,
+      },
+    ];
+    await open();
+    await submit();
+    expect(wrapper!.text()).toContain('Items is required.');
+    await add('items');
+    await wrapper!.get('#field-items input').setValue('   ');
+    await submit();
+    expect(wrapper!.text()).toContain('Items item 1 is required.');
+    expect(calls.some((call) => call.path.endsWith('/generations'))).toBe(
+      false,
+    );
+    wrapper!.unmount();
+    fields = [
+      {
+        variable: 'items',
+        label: 'Items',
+        type: 'list',
+        itemType: 'text',
+        optional: true,
+      },
+    ];
+    await open();
+    await add('items');
+    await submit();
+    expect(wrapper!.text()).toContain('Items item 1 is required.');
+    await wrapper!
+      .get('#field-items button[data-remove-item]')
+      .trigger('click');
+    await upload();
+    await submit();
+    const body = calls.find((call) => call.path.endsWith('/generations'))!.init
+      .body as FormData;
+    expect(JSON.parse(String(body.get('data')))).toEqual({});
+  });
+
+  it('requires choosing boolean items and rejects blank numeric items', async () => {
+    for (const itemType of ['boolean', 'number'] as const) {
+      fields = [
+        {
+          variable: 'items',
+          label: 'Items',
+          type: 'list',
+          itemType,
+          optional: false,
+        },
+      ];
+      await open();
+      await add('items');
+      await submit();
+      expect(wrapper!.text()).toContain('Items item 1 is required.');
+      expect(calls.some((call) => call.path.endsWith('/generations'))).toBe(
+        false,
+      );
+      wrapper!.unmount();
+      wrapper = undefined;
+    }
   });
 });

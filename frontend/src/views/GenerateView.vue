@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '../api/client';
-import type { GenerationJob, Template } from '../api/types';
+import type { FieldType, GenerationJob, Template } from '../api/types';
 import DynamicForm from '../components/DynamicForm.vue';
 import JsonEditor from '../components/JsonEditor.vue';
 import ResourceUploads from '../components/ResourceUploads.vue';
@@ -20,12 +20,13 @@ function updateJob(value: GenerationJob) {
 }
 const template = ref<Template | null>(null);
 const aliases = ref<string[]>([]);
-const values = ref<Record<string, string>>(Object.create(null));
+const values = ref<Record<string, string | string[]>>(Object.create(null));
 const files = ref<Record<string, File>>(Object.create(null));
 const json = ref('{}');
 const loading = ref(true);
 const busy = ref(false);
 const error = ref('');
+const showValidation = ref(false);
 const base = `/api/templates/${encodeURIComponent(String(route.params.id))}`;
 async function load() {
   loading.value = true;
@@ -38,7 +39,7 @@ async function load() {
     template.value = metadata.template;
     aliases.value = resources.aliases;
     for (const field of metadata.template.manifest.shape?.fields ?? [])
-      values.value[field.variable] = '';
+      values.value[field.variable] = field.type === 'list' ? [] : '';
   } catch (cause) {
     error.value = (cause as Error).message;
   } finally {
@@ -46,6 +47,24 @@ async function load() {
   }
 }
 onMounted(load);
+function scalarValue(
+  type: FieldType,
+  value: string,
+  label: string,
+): string | number | boolean {
+  if (type === 'number') {
+    const number = Number(value);
+    if (!value.trim() || !Number.isFinite(number))
+      throw new Error(`${label} must be a finite number.`);
+    return number;
+  }
+  if (type === 'boolean') {
+    if (value !== 'true' && value !== 'false')
+      throw new Error(`${label} is required.`);
+    return value === 'true';
+  }
+  return value;
+}
 function documentData(): Record<string, unknown> {
   if (!template.value!.manifest.shape) {
     try {
@@ -63,32 +82,38 @@ function documentData(): Record<string, unknown> {
   }
   const data: Record<string, unknown> = Object.create(null);
   for (const field of template.value!.manifest.shape.fields) {
-    const value = values.value[field.variable] ?? '';
+    const value = values.value[field.variable];
+    if (field.type === 'list') {
+      const items = Array.isArray(value) ? value : [];
+      if (items.length === 0) {
+        if (field.optional) continue;
+        throw new Error(`${field.label} is required.`);
+      }
+      data[field.variable] = items.map((item, index) => {
+        const label = `${field.label} item ${index + 1}`;
+        if (!item.trim()) throw new Error(`${label} is required.`);
+        return scalarValue(field.itemType, item, label);
+      });
+      continue;
+    }
+    const scalar = typeof value === 'string' ? value : '';
     if (
-      value === '' ||
+      scalar === '' ||
       ((field.type === 'text' || field.type === 'longtext') &&
         !field.optional &&
-        !value.trim())
+        !scalar.trim())
     ) {
       if (field.optional) continue;
       throw new Error(`${field.label} is required.`);
     }
-    if (field.type === 'number') {
-      const number = Number(value);
-      if (!value.trim() || !Number.isFinite(number))
-        throw new Error(`${field.label} must be a finite number.`);
-      data[field.variable] = number;
-    } else if (field.type === 'boolean') {
-      if (value !== 'true' && value !== 'false')
-        throw new Error(`${field.label} is required.`);
-      data[field.variable] = value === 'true';
-    } else data[field.variable] = value;
+    data[field.variable] = scalarValue(field.type, scalar, field.label);
   }
   return data;
 }
 async function generate() {
   if (busy.value || !template.value) return;
   error.value = '';
+  showValidation.value = true;
   try {
     const body = new FormData();
     body.append('data', JSON.stringify(documentData()));
@@ -180,6 +205,7 @@ async function generate() {
             <DynamicForm
               v-if="template.manifest.shape"
               v-model="values"
+              :show-validation="showValidation"
               :fields="template.manifest.shape.fields"
               :disabled="busy"
             />

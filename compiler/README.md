@@ -90,6 +90,14 @@ docker build -t automemorydoll-compiler:local compiler
 CONTAINER_RUNTIME=runsc IMAGE=automemorydoll-compiler:local sh compiler/tests/container-smoke.sh
 ```
 
+Failed compiler manifests include a `stage` (`input`, `templating`, `latex`, or
+`service`). Input/template errors and TeX logs contain at most 8,000 Unicode
+characters; long output keeps the tail with a `[truncated]` marker. They may echo
+document contents. The worker exposes these only in the private job's status
+information. Service errors remain generic; Docker stderr and backend exceptions
+are never forwarded to users. Older compiler images keep generic error behavior;
+rebuild the image to enable detailed diagnostics. Successful manifests are unchanged.
+
 For native renderer tests (not a replacement for gVisor verification), install
 `pdftoppm`, `cwebp` and `dwebp`, then run
 `RUN_PREVIEW_RENDERER_TESTS=1 cargo test --manifest-path compiler/Cargo.toml --test preview_contract`.

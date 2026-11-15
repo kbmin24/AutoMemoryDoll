@@ -1,5 +1,5 @@
 use automemorydoll_compiler::job::Job;
-use automemorydoll_compiler::output::{write_failure, write_success};
+use automemorydoll_compiler::output::{write_failure, write_failure_at_stage, write_success};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -128,6 +128,65 @@ fn command_reports_job_failure_with_nonzero_exit() {
         serde_json::from_slice(&fs::read(output.path().join("result.json")).unwrap()).unwrap();
     assert_eq!(manifest["result"], "failed");
     assert!(manifest["message"].as_str().unwrap().contains("object"));
+    assert_eq!(manifest["stage"], "input");
+}
+
+#[test]
+fn command_reports_templating_failure_with_line_context() {
+    let input = TestDir::new();
+    let output = TestDir::new();
+    input.job("{}");
+    fs::write(
+        input.path().join("template/template.tex"),
+        "Hello\n{% if %}",
+    )
+    .unwrap();
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_automemorydoll-compiler"))
+        .arg(input.path())
+        .arg(output.path())
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.path().join("result.json")).unwrap()).unwrap();
+    assert_eq!(manifest["stage"], "templating");
+    let message = manifest["message"].as_str().unwrap();
+    assert!(
+        message.contains("syntax") && message.contains(":2"),
+        "{message}"
+    );
+}
+
+#[test]
+fn command_hides_service_paths() {
+    let input = TestDir::new();
+    let output = TestDir::new();
+    input.job("{}");
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_automemorydoll-compiler"))
+        .arg(input.path())
+        .arg(output.path())
+        .env("TECTONIC_BUNDLE_PATH", "/private/configured/bundle")
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(output.path().join("result.json")).unwrap()).unwrap();
+    assert_eq!(manifest["stage"], "service");
+    assert!(!manifest["message"].as_str().unwrap().contains("/private"));
+}
+
+#[test]
+fn diagnostic_manifest_bounds_multibyte_text_and_keeps_error_tail() {
+    let output = TestDir::new();
+    let message = format!("{}\nl.7 final error", "界".repeat(10000));
+    write_failure_at_stage(output.path(), &message, Some("latex")).unwrap();
+    let bytes = fs::read(output.path().join("result.json")).unwrap();
+    assert!(bytes.len() < 64 * 1024);
+    let manifest: Value = serde_json::from_slice(&bytes).unwrap();
+    let detail = manifest["message"].as_str().unwrap();
+    assert!(detail.starts_with("[truncated]\n"));
+    assert!(detail.ends_with("l.7 final error"));
+    assert!(detail.chars().count() <= 8000);
 }
 
 fn looks_like_uuid_pdf(name: &str) -> bool {

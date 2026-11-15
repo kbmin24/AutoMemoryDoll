@@ -100,7 +100,7 @@ for case_name in non-object invalid-tex; do
     exit 1
   fi
   case_output="$work/$case_name/output"
-  jq -e 'keys == ["filename", "message", "result"] and .result == "failed" and .filename == null and (.message | type == "string" and length > 0)' \
+  jq -e 'keys == ["filename", "message", "result", "stage"] and .result == "failed" and .filename == null and (.stage == "input" or .stage == "latex") and (.message | type == "string" and length > 0)' \
     "$case_output/result.json" >/dev/null
   if find "$case_output" -name '*.pdf' -print -quit | grep -q .; then
     echo "$case_name left a PDF behind" >&2

@@ -140,6 +140,42 @@ it('reports submission errors in the bar without requesting a job', async () => 
   expect(bar().get('[role=tooltip]').text()).toBe('Choose a file for logo.');
   expect(apiMock).not.toHaveBeenCalled();
 });
+it('shows multiline technical errors as scrollable literal text in the information section', async () => {
+  current = {
+    ...makeJob('failed'),
+    message:
+      'LaTeX compilation failed.\n\nTechnical details (may contain document content):\nl.7 <script>alert(1)</script>',
+  };
+  await open(current);
+  await bar()
+    .get('button[aria-label="Generation information"]')
+    .trigger('click');
+  const details = bar().get('[role=tooltip]');
+  expect(details.element.textContent).toBe(current.message);
+  expect(details.find('script').exists()).toBe(false);
+  expect(details.classes()).toContain('whitespace-pre-wrap');
+  expect(details.classes()).toContain('overflow-auto');
+  expect(details.classes()).toContain('max-h-80');
+});
+it('keeps diagnostic information open while keyboard focus moves into it and restores focus on Escape', async () => {
+  current = makeJob('failed');
+  await open(current);
+  document.body.appendChild(wrapper!.element);
+  const info = bar().get('button[aria-label="Generation information"]');
+  (info.element as HTMLElement).focus();
+  await flushPromises();
+  const panel = bar().get('[role=tooltip]');
+  expect(panel.attributes('tabindex')).toBe('0');
+  (panel.element as HTMLElement).focus();
+  await flushPromises();
+  expect(panel.isVisible()).toBe(true);
+  await panel.trigger('keydown', { key: 'Escape' });
+  expect(info.attributes('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(info.element);
+  await info.trigger('focus');
+  await panel.trigger('focusout', { relatedTarget: null });
+  expect(info.attributes('aria-expanded')).toBe('false');
+});
 it('allows retry after polling fails and stops polling after completion', async () => {
   apiMock.mockRejectedValueOnce(new Error('Status unavailable'));
   await open(current);

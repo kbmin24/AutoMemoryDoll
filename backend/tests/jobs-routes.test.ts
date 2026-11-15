@@ -95,6 +95,34 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+it('keeps retained diagnostics private to the job owner after template deletion', async () => {
+  const id = randomUUID();
+  const message =
+    'Templating failed (MiniJinja).\nPrivate document diagnostics';
+  jobs.push({
+    id,
+    userId: ownerId,
+    templateId,
+    status: 'failed',
+    message,
+    timestamp: new Date(),
+    pdfFilename: null,
+    template: { name: 'Deleted template', deletedAt: new Date() },
+  });
+  const own = await request(app).get(`/api/jobs/${id}`);
+  expect(own.status).toBe(200);
+  expect(own.body.job.message).toBe(message);
+  const foreign = await request(app)
+    .get(`/api/jobs/${id}`)
+    .set('X-Test-User', otherId);
+  expect(foreign.status).toBe(404);
+  expect(JSON.stringify(foreign.body)).not.toContain('Private document');
+  const foreignList = await request(app)
+    .get('/api/jobs')
+    .set('X-Test-User', otherId);
+  expect(foreignList.body.jobs).toEqual([]);
+});
+
 describe('generation routes', () => {
   it('discovers unique aliases across nested UTF-8 files and ignores binary content', async () => {
     await storage.createDirectory(templateId, ['support']);

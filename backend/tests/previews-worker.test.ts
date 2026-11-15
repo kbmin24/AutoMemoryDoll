@@ -53,7 +53,7 @@ it('publishes a sample preview without a database job and cleans the run', async
   expect(db.generationJob.create).not.toHaveBeenCalled();
   expect(await storage.listPreviewRuns()).toEqual([]);
 });
-it('retains old image on compile failure or missing resource and waits for another save', async () => {
+it('retains old image on compile failure and waits for another save', async () => {
   await processor.processTemplate(template.id);
   generator.generatePreview.mockResolvedValueOnce({
     result: 'failed',
@@ -61,13 +61,23 @@ it('retains old image on compile failure or missing resource and waits for anoth
     message: 'bad',
   });
   await processor.processTemplate(template.id);
-  await storage.writeText(template.id, ['template.tex'], '@resource(logo)');
-  await processor.processTemplate(template.id);
   expect(generator.generatePreview).toHaveBeenCalledTimes(2);
   expect(
     await readFile(join(root, 'previews', template.id, 'preview.webp')),
   ).toEqual(image);
   expect(await storage.listPreviewRuns()).toEqual([]);
+});
+it('removes an old image when resource tokens are introduced and regenerates after removal', async () => {
+  await processor.processTemplate(template.id);
+  await storage.writeText(template.id, ['support.tex'], '@resource(logo)');
+  await processor.processTemplate(template.id);
+  expect(await storage.templatePreviewExists(template.id)).toBe(false);
+  expect(generator.generatePreview).toHaveBeenCalledTimes(1);
+  expect(await storage.listPreviewRuns()).toEqual([]);
+
+  await storage.writeText(template.id, ['support.tex'], 'no resource required');
+  await processor.processTemplate(template.id);
+  expect(await storage.templatePreviewExists(template.id)).toBe(true);
 });
 it('discards a result if the template was deleted during compilation', async () => {
   generator.generatePreview.mockImplementation(

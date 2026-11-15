@@ -54,3 +54,34 @@ it('debounces live edits with active follow-up but backfill never replaces them'
     ),
   ).resolves.toBeUndefined();
 });
+
+it('uses one existing scalar sample per list, including optional lists', () => {
+  for (const itemType of ['text', 'longtext', 'number', 'boolean'] as const) {
+    for (const optional of [false, true]) {
+      const scalar = buildPreviewData({
+        version: 1,
+        shape: {
+          fields: [
+            { variable: 'item', label: 'Item', type: itemType, optional },
+          ],
+        },
+      });
+      expect(
+        buildPreviewData({
+          version: 1,
+          shape: {
+            fields: [
+              {
+                variable: 'items',
+                label: 'Items',
+                type: 'list',
+                itemType,
+                optional,
+              },
+            ],
+          },
+        }),
+      ).toEqual({ items: [scalar.item] });
+    }
+  }
+});
