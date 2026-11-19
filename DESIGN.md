@@ -359,7 +359,7 @@ retain their current behavior. See the [list field design](docs/superpowers/spec
 - Later TeX sanitization, resource limits, and the remaining sandbox policy.
 - Whether separately bundled fonts or assets are needed beyond the selected full Tectonic 2022 bundle.
 - Template sharing beyond this private-template MVP.
-- Production resource ceilings for CPU, memory, process count, and wall time; this must be decided before production exposure.
+- Production resource ceilings have an owner-approved starting profile below; runtime enforcement and suitability must be verified before production exposure.
 - Routine API route names, migration layout, package manager, detailed queue payloads, and remaining build/test conventions are left to implementation planning.
 
 The owner wants agents to ask about unresolved design choices that change product behavior, architecture, the data model, a public contract, or a security boundary. Agents should make routine implementation choices without asking a stream of tiny questions, while recording consequential choices for review.
@@ -367,3 +367,91 @@ The owner wants agents to ask about unresolved design choices that change produc
 ### Error diagnostics decision from 2026-11-08
 
 The owner requested stack traces in all backend error logs, extending the earlier startup-only exception. Original error messages and stacks are included in console and rotating file records for API, consumer, and owner CLI failures. Error events without an exception include a stack from the logging site. Logging infrastructure failures also include error details in stderr fallback records. These diagnostics may expose paths, document content, or secrets embedded in error messages; arbitrary error properties remain excluded. HTTP responses retain their existing public error contract. This decision supersedes the earlier requirement to omit arbitrary error messages and stacks.
+
+## Application container packaging: approved on 2026-11-15
+
+The owner approved separate API, worker, and frontend containers built from one
+root multi-stage Dockerfile. API and worker reuse the Node.js backend build;
+only the worker image includes Docker CLI and only its container receives the
+host Docker socket. nginx serves the Vue build and proxies same-origin `/api`
+requests to the API, with SPA route fallback. The compiler remains a separately
+built gVisor image. Preserve the service's configured non-root numeric UID/GID
+and identical absolute storage bind paths on the worker and Docker host.
+Migrations and owner bootstrap remain explicit operator commands. TLS terminates
+at an external HTTPS proxy. This packaging does not settle production resource
+ceilings. See the approved application container design in
+`docs/superpowers/specs/2026-11-15-application-containers-design.md`.
+
+## Self-contained deployment: approved on 2026-11-15
+
+The owner approved simplifying deployment into one Compose stack including private
+PostgreSQL and Redis with persistent volumes alongside API, worker and frontend.
+A setup command generates runtime secrets, provisions the dedicated non-root host
+account and private storage/log permissions, builds images, applies migrations,
+and prompts for the initial owner only when none exists. It preserves existing
+secrets and data on subsequent runs. This supersedes manual external PostgreSQL/
+Redis provisioning for the default application deployment; local development
+remains separate. Only the worker retains Docker socket access and the same
+host-visible storage paths. Docker/gVisor installation and HTTPS proxy setup
+remain host prerequisites. Production compiler ceilings still require owner
+selection and runtime verification; development values are not recommendations.
+
+
+### Deployment clarification from the owner
+
+The owner clarified that installation must use Docker Compose plus environment
+variables, with no host install script. This supersedes the setup-command and
+host-account provisioning details immediately above for the container deployment.
+Compose builds the compiler image and starts private persistent PostgreSQL/Redis.
+One-shot services initialize empty storage/log directories, apply migrations, and
+create the first owner from environment credentials; existing owners are retained.
+API and worker run as non-root numeric IDs (default 1000:1000, overridable to match
+existing data), without a host account requirement. The storage initializer runs
+briefly as root with only CHOWN/FOWNER/DAC_OVERRIDE, no network or Docker socket,
+and refuses mismatched permissions on nonempty directories. Only the worker gets
+the socket group. Host-mode development keeps its existing service-account setup.
+External HTTPS and owner-approved, verified production resource limits remain
+required. Runtime credentials stay in a private env file, not image layers.
+
+The owner requested an `.env.app` switch for HTTP access. `API_NODE_ENV` defaults
+to `production`; setting it to `development` selects the API's existing non-Secure
+cookie behavior for trusted local HTTP access. Worker production mode and required
+compiler resource limits remain unchanged. HTTPS remains the production default.
+
+### Production resource profile: approved on 2026-11-16
+
+The owner approved this starting profile for a host with 2 GiB RAM and 2 CPU
+cores. Compose requires environment values for the service ceilings, with the
+approved values in `app.env.example`:
+
+| Service | CPUs | RAM (MiB) | PIDs | /tmp (MiB) |
+| --- | --- | --- | --- | --- |
+| API | 0.5 | 256 | 64 | 32 |
+| Worker | 0.5 | 256 | 64 | 32 |
+| PostgreSQL | 0.75 | 384 | 128 | 32 |
+| Redis | 0.25 | 128 | 32 | No added tmpfs |
+| Frontend | 0.25 | 128 | 32 | 64 |
+| Compiler job | 1 | 512 | 64 | Existing runner mount |
+
+Compiler wall time remains 60,000 ms and worker shutdown grace remains 90s in
+the example. Single-compilation concurrency is unchanged. The long-running
+services plus one compiler total 1,664 MiB of memory ceilings, leaving only
+384 MiB for the host, Docker, gVisor overhead and other processes. This is a
+starting budget, not evidence that real workloads fit. CPU ceilings overlap
+and do not reserve cores. Tmpfs usage counts within the container's RAM ceiling.
+
+Implementation details: memory-plus-swap equals the RAM ceiling, matching the
+existing compiler policy. Storage initialization, migration and owner bootstrap
+reuse the API CPU/RAM/PID profile; migration and bootstrap also use its bounded
+tmpfs. The compiler-image startup check reuses compiler CPU/RAM/PID limits.
+These limits apply to running containers, not image builds. Existing compiler
+temporary storage remains under its memory ceiling; its mount is unchanged.
+
+Verify actual cgroup enforcement, uploads, ordinary PDF generation and preview
+generation on the production host. Monitor peak memory, OOM kills and Redis AOF
+rewrite overhead. Limits may need revision after measurement. Redis key
+eviction policy and application behavior are unchanged.
+
+nginx streams API request bodies rather than buffering them in its 64 MiB
+temporary filesystem, preserving the existing 100 MiB resource-upload allowance.
+This is an implementation adjustment required by the bounded temporary storage.

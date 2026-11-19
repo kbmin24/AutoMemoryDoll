@@ -38,7 +38,7 @@ function failureMessage(
     characters.length > 8000
       ? '[truncated]\n' + characters.slice(-7988).join('')
       : text;
-  return `${summaries[result.stage]}\n\nTechnical details:\n${details}`;
+  return `${summaries[result.stage]}\n\nTechnical details (may contain document content and submitted values):\n${details}`;
 }
 
 export class JobProcessor {

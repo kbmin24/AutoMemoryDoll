@@ -1,0 +1,245 @@
+name: automemorydoll
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-api-limits: &api-limits
+  cpus: '${API_CPUS:?Set API_CPUS}'
+  mem_limit: '${API_MEMORY_MB:?Set API_MEMORY_MB}m'
+  memswap_limit: '${API_MEMORY_MB:?Set API_MEMORY_MB}m'
+  pids_limit: '${API_PIDS:?Set API_PIDS}'
+
+x-backend: &backend
+  <<: *api-limits
+  logging: *logging
+  user: '${SERVICE_UID:-1000}:${SERVICE_GID:-1000}'
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - '/tmp:rw,nosuid,nodev,mode=1777,size=${API_TMP_MB:?Set API_TMP_MB}m'
+  environment: &backend-environment
+    NODE_ENV: production
+    DATABASE_URL: 'postgresql://amd:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a random hex secret}@postgres:5432/automemorydoll'
+    REDIS_URL: redis://redis:6379
+    STORAGE_ROOT: '${STORAGE_ROOT:-/srv/automemorydoll/data}'
+    LOG_DIR: /var/log/automemorydoll
+  volumes:
+    - &storage-mount '${STORAGE_ROOT:-/srv/automemorydoll/data}:${STORAGE_ROOT:-/srv/automemorydoll/data}'
+    - &log-mount '${LOG_ROOT:-/srv/automemorydoll/logs}:/var/log/automemorydoll'
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    bootstrap-owner:
+      condition: service_completed_successfully
+    init-storage:
+      condition: service_completed_successfully
+
+services:
+  compiler-image:
+    logging: *logging
+    cpus: '${COMPILER_CPUS:?Set COMPILER_CPUS}'
+    mem_limit: '${COMPILER_MEMORY_MB:?Set COMPILER_MEMORY_MB}m'
+    memswap_limit: '${COMPILER_MEMORY_MB:?Set COMPILER_MEMORY_MB}m'
+    pids_limit: '${COMPILER_PIDS:?Set COMPILER_PIDS}'
+    image: '${COMPILER_IMAGE:-automemorydoll-compiler:local}'
+    build:
+      context: ./compiler
+    entrypoint: ['/bin/true']
+    runtime: runsc
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  init-storage:
+    <<: *api-limits
+    logging: *logging
+    image: automemorydoll-api:local
+    build:
+      context: .
+      target: api
+    user: '0:0'
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    environment:
+      SERVICE_UID: '${SERVICE_UID:-1000}'
+      SERVICE_GID: '${SERVICE_GID:-1000}'
+      STORAGE_ROOT: '${STORAGE_ROOT:-/srv/automemorydoll/data}'
+      LOG_DIR: /var/log/automemorydoll
+    volumes:
+      - type: bind
+        source: '${STORAGE_ROOT:-/srv/automemorydoll/data}'
+        target: '${STORAGE_ROOT:-/srv/automemorydoll/data}'
+      - type: bind
+        source: '${LOG_ROOT:-/srv/automemorydoll/logs}'
+        target: /var/log/automemorydoll
+    command: ['sh', '/app/deploy/init-storage.sh']
+
+  postgres:
+    logging: *logging
+    cpus: '${POSTGRES_CPUS:?Set POSTGRES_CPUS}'
+    mem_limit: '${POSTGRES_MEMORY_MB:?Set POSTGRES_MEMORY_MB}m'
+    memswap_limit: '${POSTGRES_MEMORY_MB:?Set POSTGRES_MEMORY_MB}m'
+    pids_limit: '${POSTGRES_PIDS:?Set POSTGRES_PIDS}'
+    tmpfs:
+      - '/tmp:rw,nosuid,nodev,mode=1777,size=${POSTGRES_TMP_MB:?Set POSTGRES_TMP_MB}m'
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: amd
+      POSTGRES_DB: automemorydoll
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a random hex secret}'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U amd -d automemorydoll']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    logging: *logging
+    cpus: '${REDIS_CPUS:?Set REDIS_CPUS}'
+    mem_limit: '${REDIS_MEMORY_MB:?Set REDIS_MEMORY_MB}m'
+    memswap_limit: '${REDIS_MEMORY_MB:?Set REDIS_MEMORY_MB}m'
+    pids_limit: '${REDIS_PIDS:?Set REDIS_PIDS}'
+    image: redis:7
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    <<: *api-limits
+    logging: *logging
+    image: automemorydoll-tools:local
+    build:
+      context: .
+      target: tools
+    user: '${SERVICE_UID:-1000}:${SERVICE_GID:-1000}'
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - '/tmp:rw,nosuid,nodev,mode=1777,size=${API_TMP_MB:?Set API_TMP_MB}m'
+    environment:
+      HOME: /tmp
+      DATABASE_URL: 'postgresql://amd:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a random hex secret}@postgres:5432/automemorydoll'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bootstrap-owner:
+    <<: *backend
+    image: automemorydoll-api:local
+    build:
+      context: .
+      target: api
+    restart: 'no'
+    command: ['node', 'dist/cli/bootstrap-owner.js']
+    environment:
+      <<: *backend-environment
+      OWNER_USERNAME: '${OWNER_USERNAME:-}'
+      OWNER_PASSWORD: '${OWNER_PASSWORD:-}'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
+
+  api:
+    <<: *backend
+    image: automemorydoll-api:local
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *backend-environment
+      NODE_ENV: '${API_NODE_ENV:-production}'
+      JWT_SECRET: '${JWT_SECRET:?Set a JWT secret of at least 32 characters}'
+
+  worker:
+    <<: *backend
+    tmpfs:
+      - '/tmp:rw,nosuid,nodev,mode=1777,size=${WORKER_TMP_MB:?Set WORKER_TMP_MB}m'
+    cpus: '${WORKER_CPUS:?Set WORKER_CPUS}'
+    mem_limit: '${WORKER_MEMORY_MB:?Set WORKER_MEMORY_MB}m'
+    memswap_limit: '${WORKER_MEMORY_MB:?Set WORKER_MEMORY_MB}m'
+    pids_limit: '${WORKER_PIDS:?Set WORKER_PIDS}'
+    image: automemorydoll-worker:local
+    build:
+      context: .
+      target: worker
+    group_add:
+      - '${DOCKER_GID:?Set the host Docker socket group ID}'
+    environment:
+      <<: *backend-environment
+      COMPILER_IMAGE: '${COMPILER_IMAGE:-automemorydoll-compiler:local}'
+      COMPILER_CPUS: '${COMPILER_CPUS:?Set an approved CPU limit}'
+      COMPILER_MEMORY_MB: '${COMPILER_MEMORY_MB:?Set an approved memory limit}'
+      COMPILER_PIDS: '${COMPILER_PIDS:?Set an approved PID limit}'
+      COMPILER_WALL_TIME_MS: '${COMPILER_WALL_TIME_MS:?Set an approved timeout}'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bootstrap-owner:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
+      compiler-image:
+        condition: service_completed_successfully
+    # Allow bounded compilation to finish before shutdown; adjust with the timeout.
+    stop_grace_period: '${WORKER_STOP_GRACE_PERIOD:?Set a grace period longer than the compiler timeout}'
+    volumes:
+      - *storage-mount
+      - *log-mount
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+
+  frontend:
+    logging: *logging
+    cpus: '${FRONTEND_CPUS:?Set FRONTEND_CPUS}'
+    mem_limit: '${FRONTEND_MEMORY_MB:?Set FRONTEND_MEMORY_MB}m'
+    memswap_limit: '${FRONTEND_MEMORY_MB:?Set FRONTEND_MEMORY_MB}m'
+    pids_limit: '${FRONTEND_PIDS:?Set FRONTEND_PIDS}'
+    image: automemorydoll-frontend:local
+    build:
+      context: .
+      target: frontend
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - '/tmp:rw,nosuid,nodev,mode=1777,size=${FRONTEND_TMP_MB:?Set FRONTEND_TMP_MB}m'
+    ports:
+      - '127.0.0.1:8080:8080'
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
