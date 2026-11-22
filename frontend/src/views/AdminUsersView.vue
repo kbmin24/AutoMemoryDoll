@@ -8,6 +8,7 @@ const busy = ref(false);
 const error = ref('');
 const message = ref('');
 const username = ref('');
+const displayName = ref('');
 const password = ref('');
 async function load() {
   loading.value = true;
@@ -28,10 +29,12 @@ async function create() {
   try {
     const result = await api<{ user: User }>('/api/admin/users', 'POST', {
       username: username.value,
+      ...(displayName.value ? { displayId: displayName.value } : {}),
       password: password.value,
     });
     users.value.push(result.user);
     username.value = '';
+    displayName.value = '';
     message.value = 'Account created.';
   } catch (cause) {
     error.value = (cause as Error).message;
@@ -57,7 +60,9 @@ async function update(user: User, action: 'disabled' | 'role') {
     users.value = users.value.map((item) =>
       item.id === user.id ? result.user : item,
     );
-    if (user.id === session.user?.id) session.user = result.user;
+    if (user.id === session.user?.id) {
+      session.user = { ...session.user, ...result.user };
+    }
     message.value = 'Account updated.';
   } catch (cause) {
     error.value = (cause as Error).message;
@@ -67,6 +72,7 @@ async function update(user: User, action: 'disabled' | 'role') {
 }
 </script>
 <template>
+  <RouterLink class="link" to="/admin"><i class="fa-solid fa-arrow-left"></i> Admin</RouterLink>
   <h1>Users</h1>
   <p>Manage accounts. Document work stays private to each user.</p>
   <p v-if="error" role="alert">{{ error }}</p>
@@ -97,6 +103,19 @@ async function update(user: User, action: 'disabled' | 'role') {
       <p id="username-help" class="-mt-3 text-[13px]">
         3–64 letters, numbers, underscores or hyphens; start with a letter,
         number or underscore.
+      </p>
+      <label for="new-display-name">Display Name</label>
+      <input
+        class="input mb-5 min-h-[46px] w-full min-w-0"
+        id="new-display-name"
+        v-model="displayName"
+        autocomplete="off"
+        pattern="(?=[^\x00]*\S)[^\x00]{3,64}"
+        aria-describedby="new-display-name-help"
+      />
+      <p id="new-display-name-help" class="-mt-3 text-[13px]">
+        Use 3–64 characters with at least one non-whitespace character, or leave
+        blank to use the username.
       </p>
       <label for="initial-password">Initial password</label>
       <input

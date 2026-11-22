@@ -12,14 +12,16 @@ beforeAll(async () => {
   passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 });
 
-function fixture(nodeEnv?: string) {
+function fixture(nodeEnv?: string, createdAt: Date | null = null) {
   const user = {
     id: randomUUID(),
     username: 'tester',
+    displayId: 'tester',
     role: 'user',
     disabled: false,
     tokenVersion: 0,
     passwordHash,
+    createdAt,
   };
   const db = {
     user: {
@@ -29,8 +31,16 @@ function fixture(nodeEnv?: string) {
         user.tokenVersion++;
         return { count: 1 };
       },
-      update: async () => {
-        user.tokenVersion++;
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: { displayId?: string };
+      }) => {
+        expect(where).toEqual({ id: user.id });
+        if (data.displayId !== undefined) user.displayId = data.displayId;
+        else user.tokenVersion++;
         return user;
       },
     },
@@ -42,6 +52,59 @@ function fixture(nodeEnv?: string) {
   });
   return createApp(db, config);
 }
+
+it.each([null, new Date('2026-11-22T23:59:59.000Z')])(
+  'returns the join date %s in login and session refresh',
+  async (createdAt) => {
+    const agent = request.agent(fixture('development', createdAt));
+    const login = await agent
+      .post('/api/auth/login')
+      .send({ username: 'tester', password })
+      .expect(200);
+    const refreshed = await agent.get('/api/auth/me').expect(200);
+    const joinedAt = createdAt?.toISOString() ?? null;
+    expect(login.body.user.joinedAt).toBe(joinedAt);
+    expect(refreshed.body.user.joinedAt).toBe(joinedAt);
+  },
+);
+
+it('lets a signed-in user change only their own display ID', async () => {
+  const app = fixture('development');
+  const path = '/api/auth/display-id';
+  await request(app).patch(path).send({ displayId: 'shared-id' }).expect(401);
+  const agent = request.agent(app);
+  const login = await agent
+    .post('/api/auth/login')
+    .send({ username: 'tester', password })
+    .expect(200);
+  expect(login.body.user.displayId).toBe('tester');
+  await agent.patch(path).send({ displayId: 'shared-id' }).expect(403);
+
+  for (const body of [
+    { displayId: 'a' },
+    { displayId: '   ' },
+    { displayId: '\t\u00a0 ' },
+    { displayId: 'x'.repeat(65) },
+    { displayId: 'shared-id', userId: randomUUID() },
+  ]) {
+    await agent
+      .patch(path)
+      .set('X-CSRF-Token', login.body.csrfToken)
+      .send(body)
+      .expect(400);
+  }
+
+  await agent
+    .patch(path)
+    .set('X-CSRF-Token', login.body.csrfToken)
+    .send({ displayId: 'Shared Name' })
+    .expect(200, { displayId: 'Shared Name' });
+  const refreshed = await agent.get('/api/auth/me').expect(200);
+  expect(refreshed.body.user).toMatchObject({
+    username: 'tester',
+    displayId: 'Shared Name',
+  });
+});
 
 it('keeps a development session on HTTP and still requires CSRF', async () => {
   const agent = request.agent(fixture('development'));

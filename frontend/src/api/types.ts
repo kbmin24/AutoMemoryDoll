@@ -8,7 +8,7 @@ export interface User {
 }
 
 export interface AuthSession {
-  user: User;
+  user: User & { joinedAt: string | null; displayId: string };
   csrfToken: string;
 }
 
@@ -44,3 +44,13 @@ export interface GenerationJob {
   timestamp: string;
   pdfFilename: string | null;
 }
+
+export type AiDraftRequest =
+  | {
+      pageSize: 'A4' | 'Letter';
+      orientation: 'portrait' | 'landscape';
+      description: string;
+    }
+  | { source: string; description: string };
+
+export type AiDraftResponse = { tex: string };

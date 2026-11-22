@@ -12,7 +12,16 @@ let loggedIn = true;
 let loginFails = false;
 let templatesFail = false;
 let calls: { path: string; init: RequestInit }[];
-const user = () => ({ id: 'self', username: 'reader', role, disabled: false });
+let joinedAt: string | null;
+let displayId: string;
+const user = () => ({
+  id: 'self',
+  username: 'reader',
+  role,
+  disabled: false,
+  displayId,
+  joinedAt,
+});
 const member = {
   id: 'member',
   username: 'writer',
@@ -22,6 +31,8 @@ const member = {
 
 beforeEach(() => {
   role = 'user';
+  joinedAt = null;
+  displayId = 'reader';
   loggedIn = true;
   loginFails = false;
   templatesFail = false;
@@ -53,6 +64,22 @@ beforeEach(() => {
                 },
               ],
             };
+      } else if (path === '/api/admin/ai/usage') {
+        data = {
+          usedTokens: '1234567',
+          enabled: true,
+          quotaTokens: 5_000_000,
+          userQuotaTokens: 100_000,
+          resetsAt: new Date(Date.now() + 50 * 60 * 60 * 1000).toISOString(),
+        };
+      } else if (path === '/api/admin/ai/enabled' && init.method === 'PATCH') {
+        data = JSON.parse(String(init.body));
+      } else if (path === '/api/admin/ai/quotas' && init.method === 'PATCH') {
+        data = {
+          appMonthlyTokens: 5_000_000,
+          userMonthlyTokens: 100_000,
+          ...JSON.parse(String(init.body)),
+        };
       } else if (path === '/api/admin/users' && init.method === 'GET') {
         data = { users: [{ ...user(), role: 'owner' }, member] };
       } else if (path.endsWith('/role')) {
@@ -65,6 +92,10 @@ beforeEach(() => {
         };
       } else if (path === '/api/admin/users') {
         data = { user: { ...member, id: 'new', username: 'newwriter' } };
+      } else if (path === '/api/auth/display-id') {
+        data = { displayId: JSON.parse(String(init.body)).displayId };
+      } else if (path === '/api/auth/ai-usage') {
+        data = { percentUsed: 42 };
       } else if (path === '/api/auth/password') {
         data = { message: 'Password changed' };
       } else {
@@ -95,7 +126,10 @@ async function open(path = '/templates') {
   return router;
 }
 async function submit() {
-  await wrapper!.get('form').trigger('submit');
+  const passwordForm = wrapper!.find('form:has(#current-password)');
+  await (passwordForm.exists() ? passwordForm : wrapper!.get('form')).trigger(
+    'submit',
+  );
   await flushPromises();
 }
 function accountButton() {
@@ -156,6 +190,7 @@ describe('authentication and private templates', () => {
     expect(wrapper!.text()).not.toContain('Private letter');
   });
   it('opens account actions from the icon and closes on navigation', async () => {
+    displayId = 'Reader Name';
     const router = await open();
     expect(wrapper!.find('nav a[href="/account"]').exists()).toBe(false);
     expect(wrapper!.find('a[href="/account"]').exists()).toBe(false);
@@ -167,9 +202,11 @@ describe('authentication and private templates', () => {
       true,
     );
     expect(accountButton().text()).toBe('');
-    expect(wrapper!.get('#account-menu > :first-child').text()).toBe('reader');
+    expect(wrapper!.get('#account-menu > :first-child').text()).toBe(
+      'Reader Name',
+    );
     expect(
-      wrapper!.find('#account-menu > .account-username + hr').exists(),
+      wrapper!.find('#account-menu > .account-display-name + hr').exists(),
     ).toBe(true);
     expect(wrapper!.get('a[href="/account"]').text()).toBe('My Account');
     await wrapper!.get('a[href="/account"]').trigger('click');
@@ -177,7 +214,7 @@ describe('authentication and private templates', () => {
     expect(router.currentRoute.value.path).toBe('/account');
     expect(wrapper!.find('#account-menu').exists()).toBe(false);
   });
-  it('dismisses account actions with Escape, outside click, or the username', async () => {
+  it('dismisses account actions with Escape, an outside click, or the menu button', async () => {
     await open();
     await accountButton().trigger('click');
     await accountButton().trigger('keydown', { key: 'Escape' });
@@ -195,6 +232,80 @@ describe('authentication and private templates', () => {
     });
     expect(wrapper!.find('#account-menu').exists()).toBe(false);
   });
+  it.each([null, '2026-11-22T23:59:59.000Z'])(
+    'shows Account Info for an account with join date %s',
+    async (date) => {
+      joinedAt = date;
+      await open('/account');
+      const info = wrapper!.get(
+        'section[aria-labelledby="account-info-heading"]',
+      );
+      expect(info.get('h2').text()).toBe('Account Info');
+      expect(info.findAll('dt').map((label) => label.text())).toEqual([
+        'Username',
+        'Role',
+        'Joined date',
+        'Display Name',
+      ]);
+      expect(
+        info
+          .findAll('dd')
+          .slice(0, 2)
+          .map((value) => value.text()),
+      ).toEqual(['reader', 'user']);
+      if (date) {
+        expect(info.get('time').attributes('datetime')).toBe(date);
+        expect(info.get('time').text()).toContain('2026');
+      } else {
+        expect(info.findAll('dd')[2].text()).toBe('Unknown');
+      }
+      expect(wrapper!.get('h1').element.nextElementSibling).toBe(info.element);
+    },
+  );
+
+  it('changes the plain-text display name through a popup', async () => {
+    await open('/account');
+    const change = button('Change');
+    expect(change.element.parentElement?.textContent).toContain('reader');
+    const dialog = wrapper!.get<HTMLDialogElement>('#display-name-dialog');
+    Object.assign(dialog.element, {
+      showModal: () => dialog.element.setAttribute('open', ''),
+      close: () => dialog.element.removeAttribute('open'),
+    });
+    expect(dialog.attributes('open')).toBeUndefined();
+    await change.trigger('click');
+    expect(dialog.attributes('open')).toBeDefined();
+    const input = dialog.get<HTMLInputElement>('#display-name');
+    expect(input.element.value).toBe('reader');
+    await input.setValue('   ');
+    expect(
+      dialog.get('button[type="submit"]').attributes('disabled'),
+    ).toBeDefined();
+    await input.setValue('Shared Name');
+    await dialog.get('form').trigger('submit');
+    await flushPromises();
+    const update = calls.find(({ path }) => path === '/api/auth/display-id')!;
+    expect(update.init.method).toBe('PATCH');
+    expect(JSON.parse(String(update.init.body))).toEqual({
+      displayId: 'Shared Name',
+    });
+    expect(session.user).toMatchObject({
+      username: 'reader',
+      displayId: 'Shared Name',
+    });
+    expect(change.element.parentElement?.textContent).toContain('Shared Name');
+    expect(dialog.attributes('open')).toBeUndefined();
+  });
+
+  it('shows personal monthly AI usage as a percentage', async () => {
+    await open('/account');
+    expect(wrapper!.text()).toContain('My AI Usage');
+    const progress = wrapper!.get('progress[aria-label="Monthly AI usage"]');
+    expect(progress.attributes('value')).toBe('42');
+    expect(progress.attributes('max')).toBe('100');
+    expect(wrapper!.text()).toContain('42%');
+  });
+
   it('changes the password and requires login again', async () => {
     const router = await open('/account');
     await wrapper!.get('#current-password').setValue('current-password');
@@ -300,11 +411,89 @@ describe('authentication and private templates', () => {
 
 describe('administration', () => {
   it('blocks the admin route and navigation for regular users', async () => {
-    const router = await open('/admin/users');
+    const router = await open('/admin');
+    expect(router.currentRoute.value.path).toBe('/templates');
+    expect(wrapper!.find('nav a[href="/admin"]').exists()).toBe(false);
+    await router.push('/admin/users');
+    await flushPromises();
     expect(router.currentRoute.value.path).toBe('/templates');
     expect(wrapper!.find('a[href="/admin/users"]').exists()).toBe(false);
     expect(calls.some((call) => call.path === '/api/admin/users')).toBe(false);
   });
+  it('opens AI usage from Admin and shows exact counts', async () => {
+    role = 'admin';
+    const router = await open('/admin');
+    await wrapper!.get('main a[href="/admin/ai"]').trigger('click');
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe('/admin/ai');
+    expect(wrapper!.get('main h1').text()).toBe('AI');
+    expect(wrapper!.text()).toContain('1,234,567');
+    expect(wrapper!.text()).toContain('5,000,000');
+    expect(wrapper!.get('main progress').attributes('value')).toBe('24.69');
+  });
+
+  it('lets an admin disable and re-enable AI for the website', async () => {
+    role = 'admin';
+    await open('/admin/ai');
+    const toggle = wrapper!.get<HTMLInputElement>('input[role="switch"]');
+    expect(toggle.element.checked).toBe(true);
+    for (const enabled of [false, true]) {
+      await toggle.setValue(enabled);
+      await flushPromises();
+      expect(toggle.element.checked).toBe(enabled);
+      const call = calls
+        .filter(({ path }) => path === '/api/admin/ai/enabled')
+        .at(-1)!;
+      expect(call.init.method).toBe('PATCH');
+      expect(call.init.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' });
+      expect(JSON.parse(String(call.init.body))).toEqual({ enabled });
+    }
+  });
+
+  it('shows time remaining and saves both AI quota limits', async () => {
+    role = 'owner';
+    await open('/admin/ai');
+    expect(wrapper!.text()).toMatch(/Resets in 2 days, 2 hours/);
+    const website = wrapper!.get<HTMLInputElement>('#app-ai-limit');
+    const personal = wrapper!.get<HTMLInputElement>('#user-ai-limit');
+    expect(website.element.value).toBe('5000000');
+    expect(personal.element.value).toBe('100000');
+    await website.setValue('6000000');
+    await personal.setValue('120000');
+    await wrapper!.get('form').trigger('submit');
+    await flushPromises();
+    const call = calls.find(({ path }) => path === '/api/admin/ai/quotas')!;
+    expect(call.init.method).toBe('PATCH');
+    expect(call.init.headers).toMatchObject({ 'X-CSRF-Token': 'csrf' });
+    expect(JSON.parse(String(call.init.body))).toEqual({
+      appMonthlyTokens: 6_000_000,
+      userMonthlyTokens: 120_000,
+    });
+    expect(wrapper!.text()).toContain('6,000,000');
+    expect(wrapper!.text()).toContain('Limits saved.');
+  });
+
+  it.each(['admin', 'owner'] as const)(
+    'opens the Admin landing page and Users tile for %s',
+    async (value) => {
+      role = value;
+      const router = await open();
+      const adminLink = wrapper!.get('nav a[href="/admin"]');
+      expect(adminLink.text()).toBe('Admin');
+      expect(wrapper!.find('nav a[href="/admin/users"]').exists()).toBe(false);
+      await adminLink.trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/admin');
+      expect(wrapper!.get('main h1').text()).toBe('Admin');
+      const tile = wrapper!.get('main a[href="/admin/users"]');
+      expect(tile.text()).toBe('Users');
+      await tile.trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/admin/users');
+      expect(wrapper!.get('main h1').text()).toBe('Users');
+    },
+  );
+
   it.each(['admin', 'owner'] as const)(
     'allows %s to create and disable accounts, with role controls only for owner',
     async (value) => {
@@ -315,8 +504,20 @@ describe('administration', () => {
         wrapper!.findAll('button').some((item) => item.text() === 'Make admin'),
       ).toBe(value === 'owner');
       await wrapper!.get('#new-username').setValue('newwriter');
+      const name = wrapper!.get<HTMLInputElement>('#new-display-name');
+      if (value === 'owner') await name.setValue('Writer Name');
       await wrapper!.get('#initial-password').setValue('initial-password');
       await submit();
+      const create = calls.find(
+        ({ path, init }) =>
+          path === '/api/admin/users' && init.method === 'POST',
+      )!;
+      expect(JSON.parse(String(create.init.body))).toEqual({
+        username: 'newwriter',
+        password: 'initial-password',
+        ...(value === 'owner' ? { displayId: 'Writer Name' } : {}),
+      });
+      expect(name.element.value).toBe('');
       expect(wrapper!.text()).toContain('newwriter');
       await button('Disable').trigger('click');
       await flushPromises();

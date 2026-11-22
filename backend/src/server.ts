@@ -1,3 +1,5 @@
+import { createAiQuotaRepository } from './ai/ai-quota.repository.js';
+import { createOpenAiDraftService } from './ai/ai.service.js';
 import { loadEnvironment } from './env.js';
 import { createPrismaClient } from './db/prisma.js';
 import { loadConfig } from './config.js';
@@ -15,6 +17,9 @@ await runService('api', async (logger, loggingConfig) => {
   const db = createPrismaClient(config.databaseUrl);
   const storage = new FileSystemStorage(process.env.STORAGE_ROOT ?? './data');
   const jobQueue = createJobQueue(config.redisUrl, logger);
+  const ai = config.openai
+    ? createOpenAiDraftService(config.openai, createAiQuotaRepository(db))
+    : undefined;
   const app = createApp(
     db,
     {
@@ -27,6 +32,7 @@ await runService('api', async (logger, loggingConfig) => {
     logger,
     loggingConfig.trustedProxies,
     jobQueue.publisher,
+    ai,
   );
   const server = app.listen(config.port);
   await new Promise<void>((resolve, reject) => {

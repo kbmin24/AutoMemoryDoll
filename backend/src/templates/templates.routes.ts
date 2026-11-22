@@ -24,6 +24,8 @@ import {
   templateDto,
   updateTemplate,
 } from './templates.service.js';
+import { AiDraftError, type AiDraftService } from '../ai/ai.service.js';
+import { validateManifest } from './shape.js';
 import { workspaceRoutes } from './workspace.routes.js';
 import { generationRoutes } from '../jobs/jobs.routes.js';
 import {
@@ -42,6 +44,7 @@ export function templatesRoutes(
   queue?: QueuePublisher,
   previews?: PreviewScheduler,
   logger: Logger = silentLogger,
+  ai?: AiDraftService,
 ) {
   const router = Router();
   router.use(requireUser(db, config));
@@ -173,6 +176,52 @@ export function templatesRoutes(
       );
       markActionSuccess(response, { templateId: String(request.params.id) });
       response.status(204).end();
+    },
+  );
+
+  router.post(
+    '/:id/ai/draft',
+    requireCsrf(config),
+    id,
+    body('pageSize')
+      .if((_value, { req }) => req.body?.source === undefined)
+      .isString()
+      .isIn(['A4', 'Letter']),
+    body('orientation')
+      .if((_value, { req }) => req.body?.source === undefined)
+      .isString()
+      .isIn(['portrait', 'landscape']),
+    body('source')
+      .optional()
+      .isString()
+      .bail()
+      .custom(
+        (source, { req }) =>
+          Boolean(source.trim()) &&
+          req.body.pageSize === undefined &&
+          req.body.orientation === undefined,
+      ),
+    body('description')
+      .isString()
+      .bail()
+      .trim()
+      .isLength({ min: 1, max: 4000 }),
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      const ownerId = userId(request);
+      const template = await getTemplate(
+        db,
+        ownerId,
+        String(request.params.id),
+      );
+      if (!ai) throw new AiDraftError();
+      const { shape } = validateManifest(template.manifest);
+      const result = await ai.draft(ownerId, request.body, {
+        name: template.name,
+        shape,
+      });
+      response.set('Cache-Control', 'private, no-store').json(result);
     },
   );
 

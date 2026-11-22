@@ -8,7 +8,13 @@ import {
   useRouter,
 } from "vue-router";
 import { api } from "../api/client";
-import type { Template, TreeEntry } from "../api/types";
+import type {
+  AiDraftRequest,
+  AiDraftResponse,
+  Template,
+  TreeEntry,
+} from "../api/types";
+import AiDraftDialog from "../components/AiDraftDialog.vue";
 import FileTree from "../components/FileTree.vue";
 import TextEditor from "../components/TextEditor.vue";
 import { codeLanguageForFile } from "../editor";
@@ -110,6 +116,65 @@ const dirty = computed(
       name.value !== savedName.value ||
       JSON.stringify(manifest.value) !== savedManifest.value),
 );
+
+const aiEnabled = ref(false);
+const aiDraftOpen = ref(false);
+const aiDraftPending = ref(false);
+const editorRevision = ref(0);
+const canDraft = computed(
+  () =>
+    aiEnabled.value &&
+    loaded.value &&
+    editable.value &&
+    editorLanguage.value === "jinja-latex",
+);
+const savedDraftVariables = computed(() => {
+  const saved = JSON.parse(savedManifest.value) as Template["manifest"];
+  return saved.shape?.fields.map(({ variable }) => variable) ?? [];
+});
+onMounted(async () => {
+  try {
+    const { enabled } = await api<{ enabled: boolean }>("/api/auth/ai-status");
+    aiEnabled.value = enabled === true;
+  } catch {
+    aiEnabled.value = false;
+  }
+});
+watch(text, () => editorRevision.value++, { flush: "sync" });
+watch(
+  [base, selected, canDraft, tab],
+  () => {
+    aiDraftOpen.value = false;
+  },
+  { flush: "sync" },
+);
+
+async function generateAiDraft(form: AiDraftRequest) {
+  if (
+    !aiDraftOpen.value ||
+    aiDraftPending.value ||
+    !canDraft.value ||
+    busy.value
+  )
+    return;
+  aiDraftPending.value = true;
+  try {
+    return await api<AiDraftResponse>(`${base.value}/ai/draft`, "POST", form);
+  } finally {
+    aiDraftPending.value = false;
+  }
+}
+
+function applyAiDraft(source: string, revision: number) {
+  if (
+    aiDraftOpen.value &&
+    canDraft.value &&
+    !busy.value &&
+    revision === editorRevision.value
+  ) {
+    textEditor.value?.replaceDocument(source);
+  }
+}
 
 function query(segments: string[]) {
   const params = new URLSearchParams();
@@ -805,6 +870,21 @@ async function fileAction(
                     <i class="fa-solid fa-question" aria-hidden="true"></i>
                   </button>
                 </div>
+                <button
+                  v-if="canDraft"
+                  type="button"
+                  class="btn btn-ghost btn-square btn-sm"
+                  aria-haspopup="dialog"
+                  :disabled="busy"
+                  aria-label="Generate with AI"
+                  title="Generate with AI"
+                  @click="aiDraftOpen = true"
+                >
+                  <i
+                    class="fa-solid fa-wand-magic-sparkles"
+                    aria-hidden="true"
+                  ></i>
+                </button>
               </div>
               <ImagePreview
                 v-if="imagePreviewUrl && selected"
@@ -836,6 +916,17 @@ async function fileAction(
         </section>
       </template>
     </template>
+    <AiDraftDialog
+      v-if="aiDraftOpen"
+      :template-name="savedName"
+      :variables="savedDraftVariables"
+      :revision="editorRevision"
+      :source="text"
+      :pending="aiDraftPending"
+      :generate="generateAiDraft"
+      @apply="applyAiDraft"
+      @close="aiDraftOpen = false"
+    />
     <dialog
       ref="syntaxGuideDialog"
       class="modal"
@@ -914,6 +1005,20 @@ async function fileAction(
             <pre><code>{% raw %}
 {{ this_is_not_a_variable }}
 {% endraw %}</code></pre>
+          </section>
+          <section>
+            <h3>Files uploaded for each document</h3>
+            <p>
+              Use <code>@resource(alias)</code> to refer to a file the user
+              uploads when generating a document. Start the alias with an ASCII
+              letter, then use letters, digits, underscores, or hyphens. The
+              generation form asks for one file per alias, and the app replaces
+              the token with the uploaded file’s path.
+            </p>
+            <p>For an image, load <code>graphicx</code> in the preamble.</p>
+            <pre><code>\usepackage{graphicx}</code></pre>
+            <p>Place the image in the document body.</p>
+            <pre><code>\includegraphics{@resource(logo)}</code></pre>
           </section>
           <section>
             <h3>Raw LaTeX with |safe</h3>

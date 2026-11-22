@@ -10,10 +10,12 @@ datasource db {
 model User {
   id           String          @id @default(uuid()) @db.Uuid
   username     String          @unique
+  displayId    String          @map("display_id")
   passwordHash String          @map("password_hash")
   role         String          @default("user")
   disabled     Boolean         @default(false)
   tokenVersion Int             @default(0) @map("token_version")
+  createdAt    DateTime?       @default(now()) @map("created_at") @db.Timestamptz(6)
   templates    Template[]
   jobs         GenerationJob[]
 
@@ -49,4 +51,38 @@ model GenerationJob {
 
   @@index([userId, timestamp])
   @@map("generation_jobs")
+}
+
+model Setting {
+  key   String @id
+  value Json   @db.JsonB
+
+  @@map("settings")
+}
+
+model AiQuotaReservation {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  month          DateTime @db.Date
+  reservedTokens BigInt   @map("reserved_tokens")
+  settledTokens  BigInt?  @map("settled_tokens")
+
+  @@index([month, userId])
+  @@map("ai_quota_reservations")
+}
+
+model AiAppMonthlyUsage {
+  month      DateTime @id @db.Date
+  usedTokens BigInt   @map("used_tokens")
+
+  @@map("ai_app_monthly_usage")
+}
+
+model AiUserMonthlyUsage {
+  month      DateTime @db.Date
+  userId     String   @map("user_id") @db.Uuid
+  usedTokens BigInt   @map("used_tokens")
+
+  @@id([month, userId])
+  @@map("ai_user_monthly_usage")
 }

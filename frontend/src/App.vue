@@ -85,8 +85,8 @@ async function signOut() {
         <RouterLink
           class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
           v-if="session.user.role !== 'user'"
-          to="/admin/users"
-          >Users</RouterLink
+          to="/admin"
+          >Admin</RouterLink
         >
       </nav>
       <div
@@ -111,8 +111,10 @@ async function signOut() {
           id="account-menu"
           class="dropdown-content absolute top-[calc(100%+8px)] right-0 z-10 w-[min(200px,calc(100vw-40px))] rounded-box border border-outline bg-base-100 p-1.5 shadow-lg"
         >
-          <div class="account-username px-3 py-2.5 font-semibold wrap-anywhere">
-            {{ session.user.username }}
+          <div
+            class="account-display-name px-3 py-2.5 font-semibold wrap-anywhere"
+          >
+            {{ session.user.displayId }}
           </div>
           <hr class="mx-1.5 my-1 border-0 border-t border-primary" />
           <RouterLink

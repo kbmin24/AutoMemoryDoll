@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef } from "vue";
 import { Codemirror } from "vue-codemirror";
+import { isolateHistory } from "@codemirror/commands";
 import { basicSetup, EditorView } from "codemirror";
 import type { Completion } from "@codemirror/autocomplete";
 import { codeLanguageSupport, type CodeLanguage } from "../editor";
@@ -25,7 +26,17 @@ function insertSnippet(source: string) {
   view.dispatch(view.state.replaceSelection(source), { scrollIntoView: true });
   view.focus();
 }
-defineExpose({ insertSnippet });
+function replaceDocument(source: string) {
+  const view = editorView.value;
+  if (!view || props.disabled || view.state.doc.toString() === source) return;
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: source },
+    selection: { anchor: 0 },
+    annotations: isolateHistory.of("full"),
+    scrollIntoView: true,
+  });
+}
+defineExpose({ insertSnippet, replaceDocument });
 
 const theme = EditorView.theme({
   "&": {

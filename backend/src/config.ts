@@ -5,6 +5,7 @@ export type Config = {
   cookieSecure: boolean;
   port: number;
   redisUrl?: string;
+  openai?: { apiKey: string; model: string };
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -21,7 +22,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     port > 65535
   )
     throw new Error('Invalid server configuration');
+  const apiKey = env.OPENAI_API_KEY?.trim();
+  const model = env.OPENAI_MODEL?.trim();
   return {
+    ...(apiKey && model ? { openai: { apiKey, model } } : {}),
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     jwtSecret: env.JWT_SECRET,

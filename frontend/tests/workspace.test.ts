@@ -5,7 +5,7 @@ import { createAppRouter } from "../src/router";
 import App from "../src/App.vue";
 import CodeEditArea from "../src/components/CodeEditArea.vue";
 import { editorView, setEditorText } from "./helpers/code-editor";
-import { undo } from "@codemirror/commands";
+import { redo, undo } from "@codemirror/commands";
 import type { TreeEntry } from "../src/api/types";
 import { session } from "../src/api/client";
 
@@ -13,6 +13,7 @@ let wrapper: VueWrapper;
 let calls: { path: string; init: RequestInit }[];
 let shape: unknown;
 let failSave = false;
+let draftResponse: () => Promise<Response>;
 let workspaceFiles: TreeEntry[];
 const field = {
   variable: "name",
@@ -25,6 +26,8 @@ const template = () => ({
   name: "Letter",
   manifest: { version: 1, shape },
 });
+let aiEnabled: boolean;
+
 beforeEach(() => {
   // jsdom has no layout measurements for CodeMirror's focused selection.
   Object.defineProperties(Range.prototype, {
@@ -60,6 +63,8 @@ beforeEach(() => {
   ];
   shape = { fields: [field] };
   failSave = false;
+  draftResponse = async () => Response.json({ tex: "Generated TeX" });
+  aiEnabled = true;
   session.user = null;
   vi.stubGlobal(
     "confirm",
@@ -69,9 +74,11 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (path: string, init: RequestInit = {}) => {
       calls.push({ path, init });
+      if (path.endsWith("/ai/draft")) return draftResponse();
       let data: unknown = {};
       let status = 200;
-      if (path === "/api/auth/me")
+      if (path === "/api/auth/ai-status") data = { enabled: aiEnabled };
+      else if (path === "/api/auth/me")
         data = {
           user: { id: "self", username: "reader", role: "user" },
           csrfToken: "csrf",
@@ -987,6 +994,9 @@ it("opens and closes the syntax guide without changing the editor", async () => 
   expect(dialog.text()).toContain("{% for item in items %}");
   expect(dialog.text()).toContain("{% if condition %}");
   expect(dialog.text()).toContain("|safe");
+  expect(dialog.text()).toContain(
+    String.raw`\includegraphics{@resource(logo)}`,
+  );
   await click("Close guide");
   expect(dialog.attributes("open")).toBeUndefined();
   expect(editorView(wrapper).state.doc.toString()).toBe("unsaved document");
@@ -995,3 +1005,196 @@ it("opens and closes the syntax guide without changing the editor", async () => 
   await click("header.tex");
   expect(wrapper.find('[aria-label="Open syntax guide"]').exists()).toBe(false);
 });
+
+function aiDialog() {
+  return wrapper.get('dialog[aria-labelledby="ai-draft-title"][open]');
+}
+
+async function startAiDraft() {
+  await click("template.tex");
+  await click("Generate with AI");
+  await aiDialog().get('[name="description"]').setValue("  Create a letter  ");
+}
+
+it("hides the drafting control when site-wide AI is disabled", async () => {
+  aiEnabled = false;
+  await open();
+  await click("template.tex");
+  expect(wrapper.find('[aria-label="Generate with AI"]').exists()).toBe(false);
+});
+
+it("offers AI drafting only for the saved root template file", async () => {
+  await open("/templates/new");
+  expect(wrapper.find('[aria-label="Generate with AI"]').exists()).toBe(false);
+  await wrapper.unmount();
+  await open();
+  expect(wrapper.find('[aria-label="Generate with AI"]').exists()).toBe(false);
+  await click("template.tex");
+  expect(wrapper.find('[aria-label="Generate with AI"]').exists()).toBe(true);
+  await wrapper.get('[aria-label="Expand parts"]').trigger("click");
+  await click("header.tex");
+  expect(wrapper.find('[aria-label="Generate with AI"]').exists()).toBe(false);
+});
+
+it("reviews the result before applying one undoable edit and saves only when asked", async () => {
+  await open();
+  await startAiDraft();
+  await setEditorText(wrapper, "My unsaved TeX");
+  expect(aiDialog().text()).toContain("Letter");
+  expect(aiDialog().text()).toContain("name");
+  await aiDialog().get('[name="pageSize"]').setValue("Letter");
+  await aiDialog().get('[name="orientation"]').setValue("landscape");
+  await aiDialog().get("form").trigger("submit");
+  await flushPromises();
+  const request = mutation("POST", "/letter/ai/draft")!;
+  expect(JSON.parse(String(request.init.body))).toEqual({
+    pageSize: "Letter",
+    orientation: "landscape",
+    description: "Create a letter",
+  });
+  expect(request.init.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
+  expect(
+    aiDialog().get<HTMLTextAreaElement>("#ai-draft-tex").element.value,
+  ).toBe("Generated TeX");
+  const editor = editorView(wrapper);
+  expect(editor.state.doc.toString()).toBe("My unsaved TeX");
+  await click("Apply draft");
+  expect(editor.state.doc.toString()).toBe("Generated TeX");
+  expect(wrapper.text()).toContain("Unsaved changes");
+  expect(mutation("PUT", "/files/text")).toBeUndefined();
+  expect(undo(editor)).toBe(true);
+  expect(editor.state.doc.toString()).toBe("My unsaved TeX");
+  await flushPromises();
+  expect(undo(editor)).toBe(true);
+  expect(editor.state.doc.toString()).toBe("Hello");
+  await flushPromises();
+  expect(redo(editor)).toBe(true);
+  await flushPromises();
+  expect(redo(editor)).toBe(true);
+  await flushPromises();
+  await click("Save file");
+  expect(JSON.parse(String(mutation("PUT", "/files/text")?.init.body))).toEqual(
+    {
+      segments: ["template.tex"],
+      text: "Generated TeX",
+    },
+  );
+});
+
+it("modifies the current editor contents using only a change description", async () => {
+  await open();
+  await startAiDraft();
+  await setEditorText(wrapper, "My unsaved TeX");
+  await aiDialog()
+    .get<HTMLInputElement>('[aria-label="Modify"]')
+    .setValue(true);
+  expect(aiDialog().find('[name="pageSize"]').exists()).toBe(false);
+  expect(aiDialog().find('[name="orientation"]').exists()).toBe(false);
+  expect(aiDialog().text()).toContain("Describe changes");
+  await aiDialog().get('[name="description"]').setValue("Add a footer");
+  await aiDialog().get("form").trigger("submit");
+  await flushPromises();
+  const request = mutation("POST", "/letter/ai/draft")!;
+  expect(JSON.parse(String(request.init.body))).toEqual({
+    source: "My unsaved TeX",
+    description: "Add a footer",
+  });
+  const editor = editorView(wrapper);
+  expect(editor.state.doc.toString()).toBe("My unsaved TeX");
+  await click("Apply draft");
+  expect(editor.state.doc.toString()).toBe("Generated TeX");
+  expect(mutation("PUT", "/files/text")).toBeUndefined();
+});
+
+it("shows a size error before submitting an oversized Modify request", async () => {
+  await open();
+  await startAiDraft();
+  await setEditorText(wrapper, "\\".repeat(512 * 1024));
+  await aiDialog()
+    .get<HTMLInputElement>('[aria-label="Modify"]')
+    .setValue(true);
+  await aiDialog().get('[name="description"]').setValue("Add a footer");
+  await aiDialog().get("form").trigger("submit");
+  await flushPromises();
+  expect(aiDialog().get('[role="alert"]').text()).toContain("1 MiB");
+  expect(mutation("POST", "/letter/ai/draft")).toBeUndefined();
+});
+
+it.each([
+  [429, "User AI quota exceeded"],
+  [422, "Describe the LaTeX template you want to generate."],
+  [503, "AI drafting is unavailable."],
+])(
+  "shows a %s drafting error without changing the file",
+  async (status, error) => {
+    await open();
+    await startAiDraft();
+    draftResponse = async () => Response.json({ error }, { status });
+    await aiDialog().get("form").trigger("submit");
+    await flushPromises();
+    expect(aiDialog().get('[role="alert"]').text()).toBe(error);
+    expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
+  },
+);
+
+it("prevents duplicate submissions and ignores a result after cancel", async () => {
+  await open();
+  await startAiDraft();
+  let finish!: (response: Response) => void;
+  draftResponse = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const form = aiDialog().get("form");
+  await form.trigger("submit");
+  await form.trigger("submit");
+  expect(calls.filter(({ path }) => path.endsWith("/ai/draft"))).toHaveLength(
+    1,
+  );
+  expect(aiDialog().get('[role="status"]').text()).toContain("Generating");
+  await click("Cancel");
+  finish(Response.json({ tex: "Late draft" }));
+  await flushPromises();
+  expect(wrapper.find("dialog[open]").exists()).toBe(false);
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
+});
+
+it("prevents applying a draft after the editor changes, even if the text is restored", async () => {
+  await open();
+  await startAiDraft();
+  let finish!: (response: Response) => void;
+  draftResponse = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  await aiDialog().get("form").trigger("submit");
+  await setEditorText(wrapper, "New edit");
+  await setEditorText(wrapper, "Hello");
+  finish(Response.json({ tex: "Stale draft" }));
+  await flushPromises();
+  expect(aiDialog().get('[role="alert"]').text()).toContain("changed");
+  expect(aiDialog().get("button[disabled]").text()).toBe("Apply draft");
+  expect(editorView(wrapper).state.doc.toString()).toBe("Hello");
+});
+
+it.each(["file", "route"])(
+  "ignores a pending result after %s navigation",
+  async (kind) => {
+    const router = await open();
+    await wrapper.get('[aria-label="Expand parts"]').trigger("click");
+    await startAiDraft();
+    let finish!: (response: Response) => void;
+    draftResponse = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    await aiDialog().get("form").trigger("submit");
+    if (kind === "file") await click("header.tex");
+    else await router.push("/templates");
+    await flushPromises();
+    finish(Response.json({ tex: "Late draft" }));
+    await flushPromises();
+    expect(wrapper.find("dialog[open]").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Late draft");
+  },
+);

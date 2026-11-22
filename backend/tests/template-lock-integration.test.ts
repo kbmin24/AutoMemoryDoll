@@ -58,7 +58,7 @@ describe.skipIf(!baseUrl)(
       worker = createPrismaClient(url.toString());
       userId = (
         await api.user.create({
-          data: { username: 'preview-tester', passwordHash: 'unused' },
+          data: { username: 'preview-tester', displayId: 'preview-tester', passwordHash: 'unused' },
         })
       ).id;
       templateId = (

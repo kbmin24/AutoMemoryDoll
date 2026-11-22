@@ -173,6 +173,8 @@ services:
     environment:
       <<: *backend-environment
       NODE_ENV: '${API_NODE_ENV:-production}'
+      OPENAI_API_KEY: '${OPENAI_API_KEY:-}'
+      OPENAI_MODEL: '${OPENAI_MODEL:-}'
       JWT_SECRET: '${JWT_SECRET:?Set a JWT secret of at least 32 characters}'
 
   worker:

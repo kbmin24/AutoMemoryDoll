@@ -104,6 +104,7 @@ describe.skipIf(!baseUrl)('authentication and account roles', () => {
     expect(JSON.stringify(created.body)).not.toContain('passwordHash');
     const alice = await login('alice', 'password-123456');
     expect(alice.response.status).toBe(200);
+    expect(alice.response.body.user.displayId).toBe('alice');
     expect(
       (
         await request(app)
@@ -113,6 +114,28 @@ describe.skipIf(!baseUrl)('authentication and account roles', () => {
           .send({ role: 'admin' })
       ).status,
     ).toBe(403);
+  });
+
+  it('stores a valid display name supplied when creating an account', async () => {
+    const { cookie, csrf } = await login(
+      'owner',
+      'correct horse battery staple',
+    );
+    const create = (displayId: string) =>
+      request(app)
+        .post('/api/admin/users')
+        .set('Cookie', cookie)
+        .set('X-CSRF-Token', csrf)
+        .send({
+          username: 'named-user',
+          password: 'password-123456',
+          displayId,
+        });
+    await create('   ').expect(400);
+    await create('x'.repeat(65)).expect(400);
+    await create('New Display Name').expect(201);
+    const { response } = await login('named-user', 'password-123456');
+    expect(response.body.user.displayId).toBe('New Display Name');
   });
 
   it('invalidates old tokens after login, password change, and disabling an account', async () => {

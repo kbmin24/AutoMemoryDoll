@@ -55,6 +55,19 @@ export async function issueSession(
   return { token, csrfToken: csrfToken(config, jti) };
 }
 
+export function sessionUser(
+  user: Parameters<typeof publicUser>[0] & {
+    createdAt: Date | null;
+    displayId: string;
+  },
+) {
+  return {
+    ...publicUser(user),
+    displayId: user.displayId,
+    joinedAt: user.createdAt?.toISOString() ?? null,
+  };
+}
+
 export async function verifySession(
   db: Database,
   config: AuthConfig,
@@ -73,7 +86,7 @@ export async function verifySession(
       return null;
     }
 
-    return { user: publicUser(user), jti: payload.jti };
+    return { user: sessionUser(user), jti: payload.jti };
   } catch {
     return null;
   }

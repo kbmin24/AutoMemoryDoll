@@ -1,3 +1,8 @@
+import { AiDraftError, type AiDraftService } from './ai/ai.service.js';
+import {
+  AiDisabledError,
+  AiQuotaExceededError,
+} from './ai/ai-quota.repository.js';
 import type { PreviewScheduler } from './templates/template-preview.js';
 import express from 'express';
 import { requestLogging, logRequestError, failAction } from './logging/http.js';
@@ -24,18 +29,19 @@ export function createApp(
   logger: Logger = silentLogger,
   trustedProxies: string[] = [],
   previews?: PreviewScheduler,
+  ai?: AiDraftService,
 ) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', trustedProxies);
   app.use(requestLogging(logger));
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/auth', authRoutes(db, config));
+  app.use('/api/auth', authRoutes(db, config, ai));
   app.use('/api/admin', adminRoutes(db, config));
   app.use('/api/owner', ownerRoutes(db, config));
   app.use(
     '/api/templates',
-    templatesRoutes(db, config, storage, queue, previews, logger),
+    templatesRoutes(db, config, storage, queue, previews, logger, ai),
   );
   if (queue) app.use('/api/jobs', jobsRoutes(db, config, storage));
   app.use(
@@ -55,6 +61,11 @@ export function createApp(
         response.destroy();
         return;
       }
+      if (error instanceof AiDraftError)
+        return reply(error.status, error.message);
+      if (error instanceof AiDisabledError) return reply(503, error.message);
+      if (error instanceof AiQuotaExceededError)
+        return reply(429, error.message);
       if (error instanceof AccountError)
         return reply(error.status, error.message);
       if (error instanceof TemplateError)

@@ -1,8 +1,8 @@
 import { reactive } from 'vue';
-import type { AuthSession, User } from './types';
+import type { AuthSession } from './types';
 
 export const session = reactive({
-  user: null as User | null,
+  user: null as AuthSession['user'] | null,
   csrfToken: null as string | null,
 });
 

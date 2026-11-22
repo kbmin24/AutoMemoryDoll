@@ -1,5 +1,107 @@
 # AutoMemoryDoll design record
 
+## Account information
+
+Account shows the signed-in user's username, role, and joined date. PostgreSQL
+records the creation timestamp for new accounts. The owner approved showing
+Unknown for existing accounts whose creation dates were never recorded.
+
+Account Info shows the user's display name and opens a Change dialog for edits.
+Existing accounts are backfilled from their usernames. When creating an
+account, admins can supply a display name or leave it blank to use the username. Display names may be shared by multiple accounts and
+require 3–64 characters with at least one non-whitespace character. The database
+column is `display_id`. The username remains the sign-in ID.
+
+## Admin navigation
+
+Admins and owners open the Admin landing page from the main navigation.
+The page has tiles for Users and AI.
+
+## Post-MVP AI-assisted template authoring
+
+The owner selected the official OpenAI TypeScript SDK for backend AI integration. The first workstream is a backend AI module that enforces per-user and application-wide token quotas. The first feature using it is parameterized LaTeX generation from the root `template.tex` editor. The form collects page size, orientation, and a free-text description. The backend combines those inputs with document metadata and the template's parameter shape, then returns the generated TeX to the author.
+
+The owner selected initial monthly quotas of 5,000,000 tokens for the application and 100,000 tokens per user. Both limits must be configurable through a route accessible only to owners and admins. Store the two limits as separate keys in a shared Settings table with JSON values.
+
+Quotas reset at the start of each UTC calendar month. The generation request sends the saved template name and parameter shape alongside the form answers. Authors review the result before explicitly applying it as an unsaved editor edit.
+
+The owner requested Generate and Modify tabs. Generate retains page size,
+orientation, and the template description. Modify asks for a description of the
+changes and sends the current root `template.tex` editor contents to OpenAI,
+including unsaved edits. Both modes retain saved template metadata, token quotas,
+and explicit review before applying a draft as an unsaved edit.
+
+The syntax guide and AI drafting support literal `@resource(alias)` tokens for
+per-document uploads. AI modifications preserve existing resource aliases unless
+the requested changes affect them.
+
+Account shows the signed-in user's AI usage against their personal UTC-month
+cap. The account API returns only a whole percentage, rounded down and capped
+at 100%, or an unavailable state when the personal cap is zero. Usage includes
+outstanding reservations because they count against the cap.
+
+AI drafting is limited to generating reusable LaTeX/MiniJinja templates. Reject unrelated requests without returning model-generated text to the editor.
+
+See the [implementation plan](docs/superpowers/plans/2026-11-21-ai-template-drafting.md).
+
+The Admin AI page shows the exact application-wide token count against the
+monthly quota, with a countdown to the next UTC reset. Admins and owners can
+edit both the website-wide and per-user limits on this page. Usage shown
+includes outstanding reservations. The owner chose to
+defer the billing estimator.
+
+Admins and owners can disable AI website-wide from the Admin AI page. The
+switch is stored as `ai.enabled` in Settings and defaults to enabled when
+absent. Drafting checks it before contacting the provider and again at quota
+admission. Already admitted requests can finish and settle. The switch
+preserves token limits and usage history.
+
+### Monthly AI usage counters
+
+The owner approved running monthly totals for each user and for the
+application, with per-request reservations retained for settlement.
+
+| Table | Primary key | Data |
+| --- | --- | --- |
+| `ai_app_monthly_usage` | `month` | Nonnegative `BIGINT` usage total |
+| `ai_user_monthly_usage` | `(month, user_id)` | Nonnegative `BIGINT` usage total |
+| `ai_quota_reservations` | `id` | Existing user, admission month, reserved tokens, and nullable settled tokens |
+
+Store months as the first day of the UTC calendar month. A missing counter
+means zero usage. Each counter equals the sum of settled tokens for completed
+reservations plus reserved tokens for reservations with unknown or pending
+usage in its scope. Keep the existing settings keys and quota limits.
+
+- **Reserve.** Under the existing quota lock, read the limits and both
+  counters. If the request fits both caps, increment both counters and insert
+  the reservation in one transaction. Commit before calling OpenAI. A quota
+  rejection leaves all three tables untouched.
+- **Settle.** Under the same lock, find the reservation by ID and update it only
+  if it is still unsettled. Add `actual tokens − reserved tokens` to both
+  counters for the reservation's original month in the same transaction. A
+  duplicate settlement leaves both counters unchanged. Record the actual
+  usage even if it exceeds the reservation, then use the resulting total when
+  checking the next request.
+- **Handle failures.** A confirmed rejection before generation settles at zero.
+  A timeout, process crash, or response without usage leaves the reservation
+  counted, since OpenAI may have processed the request. The next UTC month
+  starts at zero. A late settlement still updates the original month.
+- **Read usage.** The Account API reads the user's current counter and personal
+  cap, returning only the existing whole percentage or unavailable state.
+  Quota checks and Account reads use indexed counter lookups.
+
+For deployment, pause API instances that can write quota data and let in-flight
+requests drain. Backfill both counter tables from the existing reservation
+ledger, including pending reservations, in the migration transaction. Verify
+the backfill against grouped ledger sums before starting the new API. An older
+API version can still read the ledger on rollback, but it does not update the
+counters. Rebuild the counters from the ledger before switching back to a
+counter-based version. Keep reservation retention unchanged in this design.
+
+Integration tests should cover concurrent admissions near both caps, pending
+and settled usage in the backfill, duplicate settlement, settlement after
+month rollover, and the Account response's percentage-only contract.
+
 ## Interface design language: decisions from 2026-11-08
 
 The owner approved migrating frontend styling to Tailwind CSS and daisyUI on 2026-11-08, with the explicit correction to **keep the existing color scheme**. Use daisyUI components with a custom light theme preserving the approved warm surfaces and charcoal accent; do not adopt a built-in theme's replacement palette. Keep Noto Sans, brand assets, existing layouts, and application behavior. This supersedes custom control implementation details from the mockup, not the design's colors or product decisions. See the [approved migration design](docs/superpowers/specs/2026-11-08-tailwind-daisyui-design.md).
@@ -12,7 +114,7 @@ The owner approved the Noto Sans mockup and explicitly confirmed that this desig
 - Avoid excessive buttons and decorative elements. Use a compact top bar for navigation. Use the mockup's color values and visual treatment; navigation contents and actions beyond those explicitly agreed remain open.
 - Display the full name AutoMemoryDoll in the top bar.
 - Vertically center the logo in the top bar and link it to `/`.
-- Use the Font Awesome regular user icon (`fa-regular fa-user`) as the account popup button. Show the username first in the dropdown, followed by a bold divider, My Account, and Log out. These actions do not appear separately in the main navigation. This supersedes the earlier visible username button.
+- Use the Font Awesome regular user icon (`fa-regular fa-user`) as the account popup button. Show the display name first in the dropdown, followed by a bold divider, My Account, and Log out. These actions do not appear separately in the main navigation. This supersedes the earlier visible username button.
 - The account password-change form requires a second entry of the new password. Mismatched entries are rejected in the frontend before sending a password-change request; the backend API contract is unchanged.
 - The starting screen shows recently used templates as cards with document previews.
 - Selecting a template opens its generation form immediately.

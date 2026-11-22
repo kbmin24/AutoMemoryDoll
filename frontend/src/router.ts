@@ -5,6 +5,8 @@ import JobsView from './views/JobsView.vue';
 import JobDetailView from './views/JobDetailView.vue';
 import LoginView from './views/LoginView.vue';
 import AccountView from './views/AccountView.vue';
+import AdminAiView from './views/AdminAiView.vue';
+import AdminView from './views/AdminView.vue';
 import AdminUsersView from './views/AdminUsersView.vue';
 import TemplatesView from './views/TemplatesView.vue';
 
@@ -37,6 +39,8 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
         meta: { workspace: true },
       },
       { path: '/account', component: AccountView },
+      { path: '/admin', component: AdminView, meta: { admin: true } },
+      { path: '/admin/ai', component: AdminAiView, meta: { admin: true } },
       {
         path: '/admin/users',
         component: AdminUsersView,

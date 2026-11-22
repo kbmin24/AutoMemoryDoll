@@ -25,7 +25,7 @@ export async function createOwner(db: Database, username: string, password: stri
   const hash = await argon2.hash(validatePassword(password), { type: argon2.argon2id });
   if (await db.user.findFirst({ where: { role: 'owner' } })) throw new AccountError('Owner already exists', 409);
   try {
-    const user = await db.user.create({ data: { username: name, passwordHash: hash, role: 'owner' } });
+    const user = await db.user.create({ data: { username: name, displayId: name, passwordHash: hash, role: 'owner' } });
     return publicUser(user);
   } catch (error) {
     if (await db.user.findFirst({ where: { role: 'owner' } })) throw new AccountError('Owner already exists', 409);
@@ -33,12 +33,26 @@ export async function createOwner(db: Database, username: string, password: stri
   }
 }
 
-export async function createRegularUser(db: Database, username: unknown, password: unknown) {
+export async function createRegularUser(
+  db: Database,
+  username: unknown,
+  password: unknown,
+  displayId?: string,
+) {
   const name = validateUsername(username);
   const hash = await argon2.hash(validatePassword(password), { type: argon2.argon2id });
   if (await findUserByUsername(db, name)) throw new AccountError('Username already exists', 409);
   try {
-    return publicUser(await db.user.create({ data: { username: name, passwordHash: hash, role: 'user' } }));
+    return publicUser(
+      await db.user.create({
+        data: {
+          username: name,
+          displayId: displayId ?? name,
+          passwordHash: hash,
+          role: 'user',
+        },
+      }),
+    );
   } catch {
     throw new AccountError('Username already exists', 409);
   }

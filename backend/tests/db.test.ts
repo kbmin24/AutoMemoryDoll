@@ -36,9 +36,9 @@ describe.skipIf(!baseUrl)('Prisma foundation', () => {
   it('enforces owner uniqueness, roles and job statuses', async () => {
     const db = createPrismaClient(databaseUrl);
     try {
-      const owner = await db.user.create({ data: { username: 'owner', passwordHash: 'hash', role: 'owner' } });
-      await expect(db.user.create({ data: { username: 'second', passwordHash: 'hash', role: 'owner' } })).rejects.toThrow();
-      await expect(db.$executeRawUnsafe(`INSERT INTO "${schema}".users (id, username, password_hash, role) VALUES (gen_random_uuid(), 'invalid', 'hash', 'superuser')`)).rejects.toThrow();
+      const owner = await db.user.create({ data: { username: 'owner', displayId: 'owner', passwordHash: 'hash', role: 'owner' } });
+      await expect(db.user.create({ data: { username: 'second', displayId: 'second', passwordHash: 'hash', role: 'owner' } })).rejects.toThrow();
+      await expect(db.$executeRawUnsafe(`INSERT INTO "${schema}".users (id, username, display_id, password_hash, role) VALUES (gen_random_uuid(), 'invalid', 'invalid', 'hash', 'superuser')`)).rejects.toThrow();
       const template = await db.template.create({ data: { ownedBy: owner.id, name: 'Test', manifest: { version: 1, shape: null } } });
       const job = await db.generationJob.create({ data: { userId: owner.id, templateId: template.id, status: 'queued', message: 'Queued' } });
       expect(job.batchCount).toBe(1);

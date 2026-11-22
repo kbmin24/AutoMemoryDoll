@@ -13,6 +13,8 @@ defineProps<{
 const emit = defineEmits<{ save: [] }>();
 const codeEditor = ref<InstanceType<typeof CodeEditArea>>();
 defineExpose({
+  replaceDocument: (source: string) =>
+    codeEditor.value?.replaceDocument(source),
   insertSnippet: (source: string) => codeEditor.value?.insertSnippet(source),
 });
 </script>
