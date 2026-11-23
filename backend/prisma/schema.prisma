@@ -20,6 +20,7 @@ model User {
   jobs          GenerationJob[]
   datasets      Dataset[]
   templateViews TemplateViewedAt[]
+  templateShares TemplateShare[]
 
   @@map("users")
 }
@@ -62,9 +63,21 @@ model Template {
   deletedAt DateTime?          @map("deleted_at") @db.Timestamptz(6)
   jobs      GenerationJob[]
   views     TemplateViewedAt[]
+  shares    TemplateShare[]
 
   @@index([ownedBy])
   @@map("templates")
+}
+
+model TemplateShare {
+  templateId  String   @map("template_id") @db.Uuid
+  recipientId String   @map("recipient_id") @db.Uuid
+  template    Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  recipient   User     @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@id([templateId, recipientId])
+  @@index([recipientId])
+  @@map("template_shares")
 }
 
 model TemplateViewedAt {

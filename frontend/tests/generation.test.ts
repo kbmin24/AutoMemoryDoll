@@ -81,7 +81,7 @@ beforeEach(() => {
             },
           ],
         };
-      else if (path.endsWith('/resources')) data = { aliases: ['logo'] };
+      else if (path === '/api/templates/letter/resources') data = { aliases: ['logo'] };
       else if (path === '/api/templates/letter/view' && init.method === 'POST')
         data = {
           template: {

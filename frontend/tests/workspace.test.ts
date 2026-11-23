@@ -182,6 +182,20 @@ function mutation(method: string, suffix: string) {
     (call) => call.init.method === method && call.path.endsWith(suffix),
   );
 }
+it("confirms template deletion from settings and returns to the list even with unsaved changes", async () => {
+  const router = await open();
+  await click("Settings");
+  await wrapper.get('[aria-label="Template name"]').setValue("Unsaved name");
+  await click("Delete template");
+  expect(mutation("DELETE", "/api/templates/letter")).toBeUndefined();
+  await click("Cancel");
+  expect(wrapper.find('[aria-label="Confirm deletion"]').exists()).toBe(false);
+  await click("Delete template");
+  await click("Confirm deletion");
+  expect(mutation("DELETE", "/api/templates/letter")).toBeDefined();
+  expect(router.currentRoute.value.path).toBe("/templates");
+});
+
 it("creates with an enabled shape and requires one valid field", async () => {
   await open("/templates/new");
   expect(

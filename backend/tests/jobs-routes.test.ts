@@ -57,9 +57,16 @@ beforeEach(async () => {
   };
   const db: any = addTemplateTransactions({
     template: {
-      findFirst: vi.fn(async ({ where }: any) =>
-        where.id === templateId && where.ownedBy === ownerId ? template : null,
-      ),
+      findFirst: vi.fn(async ({ where }: any) => {
+        if (where.id !== templateId) return null;
+        if (where.OR)
+          return where.OR.some((condition: any) => condition.ownedBy === ownerId)
+            ? template
+            : null;
+        return where.ownedBy === undefined || where.ownedBy === ownerId
+          ? template
+          : null;
+      }),
     },
     generationJob: {
       create: vi.fn(async ({ data }: any) => {

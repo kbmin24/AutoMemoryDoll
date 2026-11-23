@@ -15,11 +15,18 @@ import {
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { Database } from '../users/users.repository.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
-import { ACCOUNT_ID_PATTERN, validateRequest } from '../validation.js';
+import {
+  ACCOUNT_ID_PATTERN,
+  USERNAME_PATTERN,
+  validateRequest,
+} from '../validation.js';
 import {
   createTemplate,
   getTemplate,
+  inviteTemplateRecipient,
+  listTemplateShares,
   listTemplates,
+  removeTemplateRecipient,
   softDeleteTemplate,
   templateDto,
   updateTemplate,
@@ -28,7 +35,14 @@ import { AiDraftError, type AiDraftService } from '../ai/ai.service.js';
 import { validateManifest } from './shape.js';
 import { workspaceRoutes } from './workspace.routes.js';
 import { generationRoutes } from '../jobs/jobs.routes.js';
-import { recordTemplateView } from './templates.repository.js';
+import {
+  findGeneratableTemplate,
+  listSharedTemplates,
+  recordTemplateView,
+} from './templates.repository.js';
+import { withTemplateLock, type LockedTemplate } from './template-lock.js';
+import type { Prisma } from '../generated/prisma/client.js';
+import { TemplateError } from './templates.errors.js';
 import {
   templateResourceAliases,
   type QueuePublisher,
@@ -50,10 +64,48 @@ export function templatesRoutes(
   const router = Router();
   router.use(requireUser(db, config));
 
-  router.get('/', checkExact(), validateRequest, async (request, response) => {
-    beginAction(response);
-    response.json({ templates: await listTemplates(db, userId(request)) });
-  });
+  async function withGenerationAccess<T>(
+    viewerId: string,
+    templateId: string,
+    action: (
+      tx: Prisma.TransactionClient,
+      template: LockedTemplate,
+    ) => Promise<T>,
+  ): Promise<T> {
+    // Avoid creating a lock file for a template the caller cannot access.
+    if (!(await findGeneratableTemplate(db, viewerId, templateId)))
+      throw new TemplateError('Template not found', 404);
+
+    return withTemplateLock(
+      db,
+      storage,
+      templateId,
+      null,
+      async (tx, template) => {
+        if (!(await findGeneratableTemplate(tx, viewerId, templateId)))
+          throw new TemplateError('Template not found', 404);
+        return action(tx, template);
+      },
+    );
+  }
+
+  router.get(
+    '/',
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const viewerId = userId(request);
+      const [templates, sharedTemplates] = await Promise.all([
+        listTemplates(db, viewerId),
+        listSharedTemplates(db, viewerId),
+      ]);
+      response.set('Cache-Control', 'private, no-store').json({
+        templates,
+        sharedTemplates,
+      });
+    },
+  );
 
   router.post(
     '/',
@@ -81,6 +133,63 @@ export function templatesRoutes(
 
   const id = param('id').matches(ACCOUNT_ID_PATTERN);
   router.get(
+    '/:id/shares',
+    id,
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request, response) => {
+      const recipients = await listTemplateShares(
+        db,
+        userId(request),
+        String(request.params.id),
+      );
+      response.set('Cache-Control', 'private, no-store').json({ recipients });
+    },
+  );
+  router.post(
+    '/:id/shares',
+    requireCsrf(config),
+    id,
+    body('username').isString().bail().matches(USERNAME_PATTERN),
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const templateId = String(request.params.id);
+      const recipient = await inviteTemplateRecipient(
+        db,
+        storage,
+        userId(request),
+        templateId,
+        request.body.username,
+      );
+      markActionSuccess(response, { templateId });
+      response.set('Cache-Control', 'private, no-store').json(recipient);
+    },
+  );
+  router.delete(
+    '/:id/shares/:recipientId',
+    requireCsrf(config),
+    id,
+    param('recipientId').matches(ACCOUNT_ID_PATTERN),
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      beginAction(response);
+      const templateId = String(request.params.id);
+      await removeTemplateRecipient(
+        db,
+        storage,
+        userId(request),
+        templateId,
+        String(request.params.recipientId),
+      );
+      markActionSuccess(response, { templateId });
+      response.status(204).end();
+    },
+  );
+
+  router.get(
     '/:id/preview',
     id,
     checkExact([], { locations: ['body', 'query'] }),
@@ -88,7 +197,8 @@ export function templatesRoutes(
     async (request, response) => {
       beginAction(response);
       const templateId = String(request.params.id);
-      await getTemplate(db, userId(request), templateId);
+      if (!(await findGeneratableTemplate(db, userId(request), templateId)))
+        throw new TemplateError('Template not found', 404);
       const stream = await storage.openTemplatePreview(templateId);
       response.set({
         'Content-Type': 'image/webp',
@@ -123,11 +233,12 @@ export function templatesRoutes(
     async (request, response) => {
       beginAction(response);
       const templateId = String(request.params.id);
-      await getTemplate(db, userId(request), templateId);
-      response.set('Cache-Control', 'private, no-store');
-      response.json({
-        aliases: await templateResourceAliases(storage, templateId),
-      });
+      const aliases = await withGenerationAccess(
+        userId(request),
+        templateId,
+        () => templateResourceAliases(storage, templateId),
+      );
+      response.set('Cache-Control', 'private, no-store').json({ aliases });
     },
   );
 
@@ -139,13 +250,15 @@ export function templatesRoutes(
     validateRequest,
     async (request, response) => {
       const viewerId = userId(request);
-      const template = await getTemplate(
-        db,
+      const template = await withGenerationAccess(
         viewerId,
         String(request.params.id),
+        async (tx, template) => {
+          await recordTemplateView(db, viewerId, template.id, tx);
+          return templateDto(template);
+        },
       );
-      await recordTemplateView(db, viewerId, template.id);
-      response.json({ template: templateDto(template) });
+      response.set('Cache-Control', 'private, no-store').json({ template });
     },
   );
 

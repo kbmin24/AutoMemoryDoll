@@ -21,6 +21,7 @@ import TextEditor from "../components/TextEditor.vue";
 import { codeLanguageForFile } from "../editor";
 import ImagePreview from "../components/ImagePreview.vue";
 import ShapeEditor from "../components/ShapeEditor.vue";
+import TemplateShareDialog from "../components/TemplateShareDialog.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -103,6 +104,8 @@ const creationParent = computed(() => {
     : selected.value.segments.slice(0, -1);
 });
 const tab = ref("files");
+const sharing = ref(false);
+const confirmingDeletion = ref(false);
 const mobilePane = ref("files");
 const busy = ref(false);
 const loading = ref(false);
@@ -229,6 +232,8 @@ async function load() {
   createMenuOpen.value = false;
   uploadParent = null;
   tab.value = "files";
+  sharing.value = false;
+  confirmingDeletion.value = false;
   mobilePane.value = "files";
   error.value = status.value = "";
   name.value = savedName.value = "";
@@ -321,6 +326,14 @@ async function saveSettings() {
     savedName.value = name.value;
   }, "Template saved.");
   if (createdId) await router.replace(`/templates/${createdId}/edit`);
+}
+async function deleteTemplate() {
+  if (!confirmingDeletion.value || !loaded.value || busy.value) return;
+  await perform(async () => {
+    await api(base.value, "DELETE");
+    loaded.value = false;
+  }, "");
+  if (!loaded.value) await router.replace("/templates");
 }
 async function saveShape() {
   await perform(async () => {
@@ -721,7 +734,64 @@ async function fileAction(
           Paths: 128 characters per name, 8 levels, 512 characters total.
           template.tex is the protected entry file.
         </p>
+        <div
+          v-if="!creating"
+          class="mt-2 flex w-full flex-wrap gap-2 border-t border-outline pt-4"
+        >
+          <button
+            type="button"
+            class="btn btn-outline"
+            :disabled="busy"
+            :aria-label="`Share ${savedName}`"
+            @click="sharing = true"
+          >
+            Share
+          </button>
+          <button
+            v-if="!confirmingDeletion"
+            type="button"
+            class="btn btn-outline btn-error"
+            :disabled="busy"
+            @click="confirmingDeletion = true"
+          >
+            Delete template
+          </button>
+        </div>
+        <section
+          v-if="!creating && confirmingDeletion"
+          class="w-full rounded-box border border-outline bg-base-200 p-4"
+          aria-label="Confirm deletion"
+        >
+          <h2>Delete {{ savedName }}?</h2>
+          <p>
+            This removes its workspace files and any unsaved changes. Existing
+            jobs and PDFs remain available.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="btn btn-error"
+              :disabled="busy"
+              @click="deleteTemplate"
+            >
+              Confirm deletion
+            </button>
+            <button
+              type="button"
+              class="btn"
+              :disabled="busy"
+              @click="confirmingDeletion = false"
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
       </form>
+      <TemplateShareDialog
+        v-if="!creating && sharing && tab === 'settings'"
+        :template="{ id: String(route.params.id), name: savedName }"
+        @close="sharing = false"
+      />
       <template v-if="!creating">
         <section
           v-show="tab === 'shape'"

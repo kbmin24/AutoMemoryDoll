@@ -376,21 +376,6 @@ describe('authentication and private templates', () => {
       expect(router.currentRoute.value.path).toBe('/login');
     },
   );
-  it('confirms deletion before removing the returned template', async () => {
-    await open();
-    await button('Delete').trigger('click');
-    expect(calls.some((call) => call.init.method === 'DELETE')).toBe(false);
-    await button('Cancel').trigger('click');
-    expect(wrapper!.find('[aria-label="Confirm deletion"]').exists()).toBe(
-      false,
-    );
-    expect(wrapper!.findAll('.template-card')).toHaveLength(1);
-    await button('Delete').trigger('click');
-    await button('Delete template').trigger('click');
-    await flushPromises();
-    expect(wrapper!.text()).not.toContain('Private letter');
-    expect(wrapper!.text()).toContain('No templates yet');
-  });
   it('shows list errors without claiming an empty list', async () => {
     templatesFail = true;
     await open();

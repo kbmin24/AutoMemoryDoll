@@ -40,6 +40,8 @@ const operations: [string, string, string?][] = [
   ['GET', '/api/templates/:id'],
   ['PATCH', '/api/templates/:id', 'template.updated'],
   ['DELETE', '/api/templates/:id', 'template.deleted'],
+  ['POST', '/api/templates/:id/shares', 'template.share_granted'],
+  ['DELETE', '/api/templates/:id/shares/:recipientId', 'template.share_revoked'],
   ['GET', '/api/templates/:id/files'],
   ['DELETE', '/api/templates/:id/files', 'workspace.deleted'],
   ['POST', '/api/templates/:id/files/directories', 'workspace.directory_created'],

@@ -2,7 +2,7 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 
 export type Database = PrismaClient;
 
-export function findUserByUsername(db: Database, username: string) {
+export function findUserByUsername(db: Pick<Database, 'user'>, username: string) {
   return db.user.findUnique({ where: { username } });
 }
 

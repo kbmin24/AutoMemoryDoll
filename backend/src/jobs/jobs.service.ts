@@ -8,7 +8,7 @@ import { extname, join } from 'node:path';
 import type { ManifestV1 } from '../contracts.js';
 import type { Storage } from '../storage/storage.js';
 import { validateId } from '../storage/paths.js';
-import { getTemplate } from '../templates/templates.service.js';
+import { findGeneratableTemplate } from '../templates/templates.repository.js';
 import type { Database } from '../users/users.repository.js';
 import {
   failQueuedJob,
@@ -213,8 +213,13 @@ export async function submitGeneration(
       db,
       storage,
       input.templateId,
-      input.userId,
+      null,
       async (tx, template) => {
+        if (
+          !(await findGeneratableTemplate(tx, input.userId, input.templateId))
+        )
+          throw new JobError('Template not found', 404);
+
         const resolved =
           input.bindings === undefined
             ? input.data

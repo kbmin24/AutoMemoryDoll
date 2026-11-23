@@ -3,8 +3,75 @@ import { databaseSchema } from '../db/prisma.js';
 import type { ManifestV1 } from '../contracts.js';
 import type { Database } from '../users/users.repository.js';
 type TemplateDatabase = Pick<Database, 'template'>;
+type TemplateShareDatabase = Pick<Database, 'templateShare'>;
 
-export async function listOwnedTemplates(db: TemplateDatabase, userId: string) {
+export function findGeneratableTemplate(
+  db: TemplateDatabase,
+  userId: string,
+  templateId: string,
+) {
+  return db.template.findFirst({
+    where: {
+      id: templateId,
+      deletedAt: null,
+      OR: [
+        { ownedBy: userId },
+        { shares: { some: { recipientId: userId } } },
+      ],
+    },
+  });
+}
+
+export function listSharedTemplates(db: TemplateDatabase, userId: string) {
+  return db.template.findMany({
+    where: {
+      deletedAt: null,
+      shares: { some: { recipientId: userId } },
+    },
+    select: { id: true, name: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export function findOwnedTemplateRecipients(
+  db: TemplateDatabase,
+  userId: string,
+  templateId: string,
+) {
+  return db.template.findFirst({
+    where: { id: templateId, ownedBy: userId, deletedAt: null },
+    select: {
+      shares: {
+        orderBy: { recipient: { username: 'asc' } },
+        select: { recipient: { select: { id: true, username: true } } },
+      },
+    },
+  });
+}
+
+export function grantTemplateShare(
+  db: TemplateShareDatabase,
+  templateId: string,
+  recipientId: string,
+) {
+  return db.templateShare.createMany({
+    data: { templateId, recipientId },
+    skipDuplicates: true,
+  });
+}
+
+export function revokeTemplateShare(
+  db: TemplateShareDatabase,
+  templateId: string,
+  recipientId: string,
+) {
+  return db.templateShare.deleteMany({ where: { templateId, recipientId } });
+}
+
+export async function listOwnedTemplates(
+  db: TemplateDatabase,
+  userId: string,
+) {
   const templates = await db.template.findMany({
     where: { ownedBy: userId, deletedAt: null },
     include: { views: { where: { userId }, select: { viewedAt: true } } },
@@ -21,9 +88,10 @@ export function recordTemplateView(
   db: Database,
   userId: string,
   templateId: string,
+  executor: Pick<Database, '$executeRaw'> = db,
 ) {
   const schema = Prisma.raw(`"${databaseSchema(db).replaceAll('"', '""')}"`);
-  return db.$executeRaw(Prisma.sql`
+  return executor.$executeRaw(Prisma.sql`
     INSERT INTO ${schema}."template_viewed_at" ("template_id", "user_id", "viewed_at")
     VALUES (${templateId}::uuid, ${userId}::uuid, clock_timestamp())
     ON CONFLICT ("template_id", "user_id")

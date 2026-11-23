@@ -15,7 +15,7 @@ import {
 } from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
-import { getTemplate } from '../templates/templates.service.js';
+import { findGeneratableTemplate } from '../templates/templates.repository.js';
 import type { Database } from '../users/users.repository.js';
 import { ACCOUNT_ID_PATTERN, validateRequest } from '../validation.js';
 import {
@@ -78,23 +78,26 @@ export function generationRoutes(
   const router = Router({ mergeParams: true });
   const upload = createGenerationUploadMiddleware(storage);
 
-  const owned: RequestHandler = async (request, _response, next) => {
-    try {
-      await getTemplate(
-        db,
-        userId(request as AuthRequest),
-        String(request.params.id),
-      );
-      next();
-    } catch (error) {
-      next(error);
+  const requireGenerationAccess: RequestHandler = async (
+    request,
+    _response,
+    next,
+  ) => {
+    const templateId = String(request.params.id);
+    const viewerId = userId(request as AuthRequest);
+    if (
+      !ACCOUNT_ID_PATTERN.test(templateId) ||
+      !(await findGeneratableTemplate(db, viewerId, templateId))
+    ) {
+      throw new JobError('Template not found', 404);
     }
+    next();
   };
 
   router.post(
     '/',
     requireCsrf(config),
-    owned,
+    requireGenerationAccess,
     upload.any(),
     body('data').exists(),
     body('bindings').optional(),
@@ -116,9 +119,6 @@ export function generationRoutes(
           temporaryPath: file.path,
           originalName: file.originalname,
         }));
-        if (!ACCOUNT_ID_PATTERN.test(String(request.params.id))) {
-          throw new JobError('Template not found', 404);
-        }
         const job = await submitGeneration(
           db,
           storage,

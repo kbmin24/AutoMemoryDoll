@@ -210,9 +210,16 @@ async function setup(manifest: ManifestV1 = { version: 1, shape: null }) {
   const jobs: any[] = [];
   const db: any = addTemplateTransactions({
     template: {
-      findFirst: vi.fn(async ({ where }: any) =>
-        where.id === templateId && where.ownedBy === userId ? template : null,
-      ),
+      findFirst: vi.fn(async ({ where }: any) => {
+        if (where.id !== templateId) return null;
+        if (where.OR)
+          return where.OR.some((condition: any) => condition.ownedBy === userId)
+            ? template
+            : null;
+        return where.ownedBy === undefined || where.ownedBy === userId
+          ? template
+          : null;
+      }),
     },
     generationJob: {
       create: vi.fn(async ({ data }: any) => {

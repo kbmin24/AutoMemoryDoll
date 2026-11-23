@@ -2,18 +2,62 @@ import { withTemplateLock } from './template-lock.js';
 import { TemplateError } from './templates.errors.js';
 import { randomUUID } from 'node:crypto';
 import type { ManifestV1 } from '../contracts.js';
-import type { Database } from '../users/users.repository.js';
+import { findUserByUsername, type Database } from '../users/users.repository.js';
 import type { Storage } from '../storage/storage.js';
 import { validateId } from '../storage/paths.js';
 import { validateManifest } from './shape.js';
 import {
   findOwnedTemplate,
+  findOwnedTemplateRecipients,
+  grantTemplateShare,
   insertTemplate,
   listOwnedTemplates,
+  revokeTemplateShare,
   updateOwnedTemplate,
 } from './templates.repository.js';
 
 export { TemplateError } from './templates.errors.js';
+
+export async function listTemplateShares(
+  db: Database,
+  ownerId: string,
+  templateId: string,
+) {
+  const template = await findOwnedTemplateRecipients(db, ownerId, templateId);
+  if (!template) throw new TemplateError('Template not found', 404);
+  return template.shares.map(({ recipient }) => recipient);
+}
+
+export function inviteTemplateRecipient(
+  db: Database,
+  storage: Storage,
+  ownerId: string,
+  templateId: string,
+  username: string,
+) {
+  return withTemplateLock(db, storage, templateId, ownerId, async (tx) => {
+    const recipient = await findUserByUsername(tx, username);
+    if (!recipient || recipient.disabled)
+      throw new TemplateError('Recipient not found', 404);
+    if (recipient.id === ownerId)
+      throw new TemplateError('The template owner already has access');
+
+    await grantTemplateShare(tx, templateId, recipient.id);
+    return { id: recipient.id, username: recipient.username };
+  });
+}
+
+export function removeTemplateRecipient(
+  db: Database,
+  storage: Storage,
+  ownerId: string,
+  templateId: string,
+  recipientId: string,
+) {
+  return withTemplateLock(db, storage, templateId, ownerId, async (tx) => {
+    await revokeTemplateShare(tx, templateId, recipientId);
+  });
+}
 
 const defaultTemplate = String.raw`\documentclass[12pt, a4paper]{article}
 

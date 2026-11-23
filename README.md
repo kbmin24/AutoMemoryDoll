@@ -1,10 +1,16 @@
 # AutoMemoryDoll
-
+![Screenshot](./resources/Document_generation_demo.png)
 A template-driven document generation platform.
+
+## Key Features
+* Automated document generation: Generate documents with templated `LaTeX` using `Minijinja` templating engine
+* AI enabled: Ability to automatically generate document by connecting LLM service of your choice, with an option to disable AI features at all if needed
+* Dataset driven generation: Manage your own datasets (or upload existing CSV!) and simply bind them into your generation workflow.
+* Secure, isolated generation: Each generation is done in an isolated Docker container with gVisor, reducing security concerns.
 
 ## Deployment
 
-To deploy AutoMemoryDoll, a linux system with Docker and gVisor, with [runsc runtime](https://gvisor.dev/docs/user_guide/quick_start/docker/), is required.
+To deploy AutoMemoryDoll, a linux system with Docker and gVisor using [runsc runtime](https://gvisor.dev/docs/user_guide/quick_start/docker/), is required.
 
 1. Copy `app.env.example` to create `.env.app`. Populate `DOCKER_GID` and configure environment variables.
 

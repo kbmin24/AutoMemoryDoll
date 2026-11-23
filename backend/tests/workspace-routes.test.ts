@@ -42,7 +42,11 @@ function dbForTests() {
       findFirst: vi.fn(async ({ where }: any) =>
         template &&
         template.id === where.id &&
-        template.ownedBy === where.ownedBy &&
+        (where.OR
+          ? where.OR.some(
+              ({ ownedBy }: { ownedBy?: string }) => template.ownedBy === ownedBy,
+            )
+          : template.ownedBy === where.ownedBy) &&
         template.deletedAt === null
           ? template
           : null,
@@ -428,7 +432,7 @@ it('rejects fake image content and reports binary text reads as a controlled 400
   expect(response.body).toEqual({ error: 'Invalid workspace operation' });
 });
 
-it('serves a generated template thumbnail only to its owner with private headers', async () => {
+it('serves a generated template thumbnail with private headers and denies unrelated accounts', async () => {
   const id = (
     await request(app)
       .post('/api/templates')

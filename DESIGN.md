@@ -490,13 +490,35 @@ sample item using the existing sample value for the selected base type.
 This supersedes the earlier four-type-only restriction. Existing scalar fields
 retain their current behavior. See the [list field design](docs/superpowers/specs/2026-11-14-list-fields-design.md).
 
+### Template sharing
+
+The owner selected invitations to specific existing accounts. An invited
+account can use the template to generate documents. Template source and
+workspace access, editing, and control over sharing remain with the template
+owner. Possession of a template URL does not grant access.
+
+The owner approved invitations by exact username and individual revocation.
+Share and Delete are available in the template workspace's Settings tab.
+Recipients find live templates in the Shared with me tab and generate using
+their own data, dataset bindings and uploads. Owners and invited recipients can
+see the generated sample preview on the template card.
+Revocation blocks subsequent snapshots. Jobs with a captured snapshot can finish,
+and their PDFs remain available to the submitter under existing retention rules.
+
+Recipients see the existing detailed errors for their own generation jobs.
+Compiler diagnostics can include excerpts of template or document content,
+submitted values and paths. Direct template detail, source and workspace access
+stays owner-only. The existing template list includes a separate shared list.
+Recipients load the version-one input manifest and required upload aliases
+through the existing template view and resources endpoints.
+See the [implementation plan](docs/superpowers/plans/2026-11-23-template-sharing.md).
+
 ### Remaining project decisions
 
 - Product scope beyond this approved MVP.
 - Batch file layout and output naming; any compiler input/output behavior not specified above.
 - Later TeX sanitization, resource limits, and the remaining sandbox policy.
 - Whether separately bundled fonts or assets are needed beyond the selected full Tectonic 2022 bundle.
-- Template sharing beyond this private-template MVP.
 - Production resource ceilings have an owner-approved starting profile below; runtime enforcement and suitability must be verified before production exposure.
 - Routine API route names, migration layout, package manager, detailed queue payloads, and remaining build/test conventions are left to implementation planning.
 
