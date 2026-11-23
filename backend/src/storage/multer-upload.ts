@@ -4,7 +4,10 @@ import type { FileSystemStorage } from './filesystem-storage.js';
 
 const fileLimit = 20 * 1024 * 1024;
 
-export function createUploadMiddleware(storage: FileSystemStorage) {
+export function createUploadMiddleware(
+  storage: FileSystemStorage,
+  limits: multer.Options['limits'] = {},
+) {
   return multer({
     storage: multer.diskStorage({
       destination(_request, _file, callback) {
@@ -17,6 +20,6 @@ export function createUploadMiddleware(storage: FileSystemStorage) {
         callback(null, randomUUID());
       },
     }),
-    limits: { fileSize: fileLimit, files: 1 },
+    limits: { fileSize: fileLimit, files: 1, ...limits },
   });
 }

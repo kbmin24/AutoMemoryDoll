@@ -850,6 +850,29 @@ it("saves and reloads a list base type and clears it when returning to a scalar"
   ).toEqual([field]);
 });
 
+it("saves scalar properties on a list of objects", async () => {
+  await open();
+  await click("Data shape");
+  await wrapper.get('[aria-label="Type 1"]').setValue("object-list");
+  const properties = wrapper.findAllComponents({ name: "ShapeEditor" })[1];
+  await properties.get('[aria-label="Variable 1"]').setValue("score");
+  await properties.get('[aria-label="Display name 1"]').setValue("Score");
+  await properties.get('[aria-label="Type 1"]').setValue("number");
+  await click("Save shape");
+  const saved = JSON.parse(
+    String(mutation("PATCH", "/letter")!.init.body),
+  ).manifest;
+  expect(saved.shape.fields).toEqual([
+    {
+      ...field,
+      type: "object-list",
+      properties: [
+        { variable: "score", label: "Score", type: "number", optional: false },
+      ],
+    },
+  ]);
+});
+
 it("does not save a List field before a base type is chosen", async () => {
   await open();
   await click("Data shape");

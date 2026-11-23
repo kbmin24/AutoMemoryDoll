@@ -26,7 +26,9 @@ export function createGenerationUploadMiddleware(
         file.stream.on('data', (chunk: Buffer) => {
           total.bytes += chunk.length;
           if (total.bytes > totalLimit) {
-            file.stream.destroy(new JobError('Job resource size limit exceeded'));
+            file.stream.destroy(
+              new JobError('Job resource size limit exceeded'),
+            );
           }
         });
         try {
@@ -47,6 +49,6 @@ export function createGenerationUploadMiddleware(
   };
   return multer({
     storage: disk,
-    limits: { fileSize: fileLimit, files: 256, fields: 1 },
+    limits: { fileSize: fileLimit, files: 256, fields: 2 },
   });
 }

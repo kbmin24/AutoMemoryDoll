@@ -8,7 +8,11 @@ import { pipeline } from 'node:stream/promises';
 import { rm } from 'node:fs/promises';
 import { Router, type RequestHandler } from 'express';
 import { body, checkExact, param, validationResult } from 'express-validator';
-import { requireCsrf, requireUser, type AuthRequest } from '../auth/auth.middleware.js';
+import {
+  requireCsrf,
+  requireUser,
+  type AuthRequest,
+} from '../auth/auth.middleware.js';
 import type { AuthConfig } from '../auth/auth.service.js';
 import type { FileSystemStorage } from '../storage/filesystem-storage.js';
 import { getTemplate } from '../templates/templates.service.js';
@@ -33,23 +37,28 @@ function stagedFiles(request: AuthRequest): Express.Multer.File[] {
 }
 
 async function cleanupUploads(request: AuthRequest): Promise<void> {
-  await Promise.all(stagedFiles(request).map((file) => rm(file.path, { force: true })));
+  await Promise.all(
+    stagedFiles(request).map((file) => rm(file.path, { force: true })),
+  );
 }
 
-function generationData(request: AuthRequest): unknown {
-  if (
-    Object.keys(request.query).length ||
-    Object.keys(request.body ?? {}).length !== 1 ||
-    !Object.hasOwn(request.body, 'data')
-  ) {
-    throw new JobError('Invalid generation request');
-  }
+function generationData(request: AuthRequest) {
+  const { data, bindings } = request.body;
   if (request.is('multipart/form-data')) {
-    if (typeof request.body.data !== 'string') {
+    if (
+      typeof data !== 'string' ||
+      (bindings !== undefined && typeof bindings !== 'string')
+    ) {
       throw new JobError('Invalid generation data');
     }
     try {
-      return JSON.parse(request.body.data);
+      return {
+        data: JSON.parse(data) as unknown,
+        bindings:
+          bindings === undefined
+            ? undefined
+            : (JSON.parse(bindings) as unknown),
+      };
     } catch {
       throw new JobError('Invalid generation data');
     }
@@ -57,7 +66,7 @@ function generationData(request: AuthRequest): unknown {
   if (!request.is('application/json')) {
     throw new JobError('Invalid generation request');
   }
-  return request.body.data;
+  return { data: data as unknown, bindings: bindings as unknown };
 }
 
 export function generationRoutes(
@@ -71,7 +80,11 @@ export function generationRoutes(
 
   const owned: RequestHandler = async (request, _response, next) => {
     try {
-      await getTemplate(db, userId(request as AuthRequest), String(request.params.id));
+      await getTemplate(
+        db,
+        userId(request as AuthRequest),
+        String(request.params.id),
+      );
       next();
     } catch (error) {
       next(error);
@@ -84,6 +97,7 @@ export function generationRoutes(
     owned,
     upload.any(),
     body('data').exists(),
+    body('bindings').optional(),
     checkExact(),
     async (request, _response, next) => {
       if (!validationResult(request).isEmpty()) {
@@ -96,7 +110,7 @@ export function generationRoutes(
       beginAction(response);
       const files = stagedFiles(request as AuthRequest);
       try {
-        const data = generationData(request as AuthRequest);
+        const generation = generationData(request as AuthRequest);
         const uploads: ResourceUpload[] = files.map((file) => ({
           alias: file.fieldname,
           temporaryPath: file.path,
@@ -112,7 +126,7 @@ export function generationRoutes(
           {
             userId: userId(request as AuthRequest),
             templateId: String(request.params.id),
-            data,
+            ...generation,
             uploads,
           },
           requestLogger(response),
@@ -130,7 +144,11 @@ export function generationRoutes(
   return router;
 }
 
-export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystemStorage) {
+export function jobsRoutes(
+  db: Database,
+  config: AuthConfig,
+  storage: FileSystemStorage,
+) {
   const router = Router();
   router.use(requireUser(db, config));
   router.get('/', checkExact(), validateRequest, async (request, response) => {
@@ -145,7 +163,11 @@ export function jobsRoutes(db: Database, config: AuthConfig, storage: FileSystem
     async (request, response) => {
       beginAction(response);
       response.json({
-        job: await getJob(db, userId(request as AuthRequest), String(request.params.id)),
+        job: await getJob(
+          db,
+          userId(request as AuthRequest),
+          String(request.params.id),
+        ),
       });
     },
   );

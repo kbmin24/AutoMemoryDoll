@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import type { FieldType, Template, ShapeField } from '../api/types';
+import type {
+  FieldType,
+  Template,
+  ShapeField,
+  ScalarField,
+} from '../api/types';
 const manifest = defineModel<Template['manifest']>({ required: true });
-defineProps<{ disabled?: boolean }>();
+defineProps<{ disabled?: boolean; propertiesOnly?: boolean }>();
 function enable(event: Event) {
   manifest.value = {
     version: 1,
@@ -26,9 +31,29 @@ function changeType(index: number, type: ShapeField['type']) {
   const field: ShapeField =
     type === 'list'
       ? { variable, label, optional, type, itemType: '' as FieldType }
-      : { variable, label, optional, type };
+      : type === 'object-list'
+        ? {
+            variable,
+            label,
+            optional,
+            type,
+            properties: [
+              { variable: '', label: '', type: 'text', optional: false },
+            ],
+          }
+        : { variable, label, optional, type };
   const fields = [...manifest.value.shape!.fields];
   fields[index] = field;
+  manifest.value = { version: 1, shape: { fields } };
+}
+function updateProperties(index: number, shape: Template['manifest']) {
+  const fields = [...manifest.value.shape!.fields];
+  const field = fields[index];
+  if (field.type !== 'object-list') return;
+  fields[index] = {
+    ...field,
+    properties: (shape.shape?.fields ?? []) as ScalarField[],
+  };
   manifest.value = { version: 1, shape: { fields } };
 }
 function add() {
@@ -64,8 +89,8 @@ function remove(index: number) {
     :disabled="disabled"
     class="my-4 w-full min-w-0 rounded-box border border-outline p-4 workspace:p-5"
   >
-    <legend>Data shape</legend>
-    <label class="mb-2 flex items-center gap-2.5"
+    <legend>{{ propertiesOnly ? 'Object properties' : 'Data shape' }}</legend>
+    <label v-if="!propertiesOnly" class="mb-2 flex items-center gap-2.5"
       ><input
         class="checkbox checkbox-primary shrink-0"
         type="checkbox"
@@ -76,7 +101,7 @@ function remove(index: number) {
     >
     <p v-if="!manifest.shape">Document creators will enter a JSON object.</p>
     <template v-else>
-      <p>
+      <p v-if="!propertiesOnly">
         Define at least one field. Variables must be unique and use letters,
         numbers or underscores, starting with a letter or underscore.
       </p>
@@ -126,7 +151,10 @@ function remove(index: number) {
             <option value="longtext">Long text</option>
             <option value="number">Number</option>
             <option value="boolean">Boolean</option>
-            <option value="list">List</option>
+            <option v-if="!propertiesOnly" value="list">List</option>
+            <option v-if="!propertiesOnly" value="object-list">
+              List of objects
+            </option>
           </select></label
         >
         <label v-if="field.type === 'list'">
@@ -166,6 +194,13 @@ function remove(index: number) {
             "
           />Optional</label
         >
+        <ShapeEditor
+          v-if="field.type === 'object-list'"
+          class="workspace:col-span-3"
+          properties-only
+          :model-value="{ version: 1, shape: { fields: field.properties } }"
+          @update:model-value="updateProperties(index, $event)"
+        />
         <div class="actions flex flex-wrap items-start gap-2">
           <button
             class="btn"
@@ -195,7 +230,9 @@ function remove(index: number) {
           </button>
         </div>
       </fieldset>
-      <button class="btn" type="button" @click="add">Add field</button>
+      <button class="btn" type="button" @click="add">
+        {{ propertiesOnly ? 'Add property' : 'Add field' }}
+      </button>
     </template>
   </fieldset>
 </template>

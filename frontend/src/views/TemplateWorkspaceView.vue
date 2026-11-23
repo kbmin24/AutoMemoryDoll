@@ -52,7 +52,9 @@ const editorVariables = computed(() => {
       detail: `${field.label} · ${
         field.type === "list"
           ? `List(of ${field.itemType === "longtext" ? "Long text" : field.itemType.charAt(0).toUpperCase() + field.itemType.slice(1)})`
-          : field.type
+          : field.type === "object-list"
+            ? "List of objects"
+            : field.type
       }`,
     }));
 });
@@ -262,7 +264,11 @@ async function perform(action: () => Promise<void>, message: string) {
 }
 function validateShape() {
   if (!manifest.value.shape) return;
-  const fields = manifest.value.shape.fields;
+  validateFields(manifest.value.shape.fields);
+}
+function validateFields(
+  fields: NonNullable<Template["manifest"]["shape"]>["fields"],
+) {
   const seen = new Set<string>();
   if (!fields.length)
     throw new Error("Add at least one field or disable the data shape.");
@@ -282,6 +288,11 @@ function validateShape() {
       !["text", "longtext", "number", "boolean"].includes(field.itemType)
     ) {
       throw new Error("Choose a base type for each list.");
+    }
+    if (field.type === "object-list") {
+      if (!field.properties.length)
+        throw new Error("Add at least one property to each list of objects.");
+      validateFields(field.properties);
     }
     seen.add(field.variable);
   }

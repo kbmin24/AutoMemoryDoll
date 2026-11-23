@@ -20,6 +20,8 @@ import multer from 'multer';
 import { jobsRoutes } from './jobs/jobs.routes.js';
 import { JobError } from './jobs/jobs.errors.js';
 import type { QueuePublisher } from './jobs/jobs.service.js';
+import { datasetsRoutes } from './datasets/datasets.routes.js';
+import { DatasetError } from './datasets/datasets.repository.js';
 
 export function createApp(
   db: PrismaClient,
@@ -39,6 +41,7 @@ export function createApp(
   app.use('/api/auth', authRoutes(db, config, ai));
   app.use('/api/admin', adminRoutes(db, config));
   app.use('/api/owner', ownerRoutes(db, config));
+  app.use('/api/datasets', datasetsRoutes(db, config, storage));
   app.use(
     '/api/templates',
     templatesRoutes(db, config, storage, queue, previews, logger, ai),
@@ -71,6 +74,7 @@ export function createApp(
       if (error instanceof TemplateError)
         return reply(error.status, error.publicMessage);
       if (error instanceof JobError) return reply(error.status, error.message);
+      if (error instanceof DatasetError) return reply(error.status, error.message);
       if (error instanceof multer.MulterError)
         return reply(400, 'Invalid upload');
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT')

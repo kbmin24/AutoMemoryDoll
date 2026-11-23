@@ -1,8 +1,14 @@
 import { TemplateError } from './templates.errors.js';
-import type { FieldType, ManifestV1, ShapeField } from '../contracts.js';
+import {
+  fieldTypes,
+  type FieldType,
+  type ManifestV1,
+  type ShapeField,
+  type ScalarField,
+} from '../contracts.js';
 
 const variablePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const fieldTypes = new Set(['text', 'longtext', 'number', 'boolean']);
+const scalarTypes = new Set<string>(fieldTypes);
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -41,24 +47,33 @@ export function validateManifest(input: unknown): ManifestV1 {
     );
   }
 
+  return { version: 1, shape: { fields: validateFields(input.shape.fields) } };
+}
+
+function validateFields(input: unknown[], scalarOnly = false): ShapeField[] {
   const seen = new Set<string>();
-  const fields: ShapeField[] = input.shape.fields.map((value: unknown) => {
+  return input.map((value: unknown) => {
+    const type = record(value) ? value.type : undefined;
+    const keys = ['variable', 'label', 'type', 'optional'];
+    if (type === 'list') keys.push('itemType');
+    if (type === 'object-list') keys.push('properties');
+
     if (
       !record(value) ||
-      !keysAre(
-        value,
-        value.type === 'list'
-          ? ['variable', 'label', 'type', 'itemType', 'optional']
-          : ['variable', 'label', 'type', 'optional'],
-      ) ||
+      !keysAre(value, keys) ||
       typeof value.variable !== 'string' ||
       !variablePattern.test(value.variable) ||
       typeof value.label !== 'string' ||
       value.label.trim().length === 0 ||
       value.label.length > 200 ||
-      (value.type === 'list'
-        ? typeof value.itemType !== 'string' || !fieldTypes.has(value.itemType)
-        : !fieldTypes.has(String(value.type))) ||
+      typeof type !== 'string' ||
+      (!scalarTypes.has(type) &&
+        (scalarOnly || (type !== 'list' && type !== 'object-list'))) ||
+      (type === 'list' &&
+        (typeof value.itemType !== 'string' ||
+          !scalarTypes.has(value.itemType))) ||
+      (type === 'object-list' &&
+        (!Array.isArray(value.properties) || value.properties.length === 0)) ||
       typeof value.optional !== 'boolean' ||
       seen.has(value.variable)
     ) {
@@ -74,9 +89,15 @@ export function validateManifest(input: unknown): ManifestV1 {
       label: value.label,
       optional: value.optional,
     };
-    return value.type === 'list'
-      ? { ...base, type: 'list', itemType: value.itemType as FieldType }
-      : { ...base, type: value.type as FieldType };
+    if (type === 'list')
+      return { ...base, type, itemType: value.itemType as FieldType };
+    if (type === 'object-list') {
+      const properties = validateFields(
+        value.properties as unknown[],
+        true,
+      ) as ScalarField[];
+      return { ...base, type, properties };
+    }
+    return { ...base, type: type as FieldType };
   });
-  return { version: 1, shape: { fields } };
 }

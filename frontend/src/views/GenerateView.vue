@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '../api/client';
-import type { FieldType, GenerationJob, Template } from '../api/types';
+import type {
+  Dataset,
+  DatasetBinding,
+  FieldType,
+  GenerationJob,
+  ScalarField,
+  Template,
+} from '../api/types';
 import DynamicForm from '../components/DynamicForm.vue';
+import DatasetBindingInput from '../components/DatasetBindingInput.vue';
 import JsonEditor from '../components/JsonEditor.vue';
 import ResourceUploads from '../components/ResourceUploads.vue';
 import GenerationPreview from '../components/GenerationPreview.vue';
@@ -20,7 +28,42 @@ function updateJob(value: GenerationJob) {
 }
 const template = ref<Template | null>(null);
 const aliases = ref<string[]>([]);
-const values = ref<Record<string, string | string[]>>(Object.create(null));
+type ObjectRow = Record<string, string>;
+const values = ref<Record<string, string | string[] | ObjectRow[]>>(
+  Object.create(null),
+);
+const bindings = ref<Record<string, DatasetBinding | undefined>>(
+  Object.create(null),
+);
+const boundFields = computed(
+  () =>
+    new Set(
+      Object.entries(bindings.value)
+        .filter(([, binding]) => binding)
+        .map(([field]) => field),
+    ),
+);
+const datasets = ref<Dataset[]>([]);
+const datasetLoading = ref(false);
+const datasetError = ref('');
+let datasetsLoaded = false;
+
+async function loadDatasets() {
+  if (datasetsLoaded || datasetLoading.value) return;
+  datasetLoading.value = true;
+  datasetError.value = '';
+  try {
+    datasets.value = (
+      await api<{ datasets: Dataset[] }>('/api/datasets')
+    ).datasets;
+    datasetsLoaded = true;
+  } catch (cause) {
+    datasetError.value = (cause as Error).message;
+  } finally {
+    datasetLoading.value = false;
+  }
+}
+
 const files = ref<Record<string, File>>(Object.create(null));
 const json = ref('{}');
 const loading = ref(true);
@@ -39,7 +82,8 @@ async function load() {
     template.value = metadata.template;
     aliases.value = resources.aliases;
     for (const field of metadata.template.manifest.shape?.fields ?? [])
-      values.value[field.variable] = field.type === 'list' ? [] : '';
+      values.value[field.variable] =
+        field.type === 'list' || field.type === 'object-list' ? [] : '';
   } catch (cause) {
     error.value = (cause as Error).message;
   } finally {
@@ -65,6 +109,23 @@ function scalarValue(
   }
   return value;
 }
+function scalarFieldValue(
+  field: ScalarField,
+  value: unknown,
+  label = field.label,
+) {
+  const scalar = typeof value === 'string' ? value : '';
+  if (
+    scalar === '' ||
+    ((field.type === 'text' || field.type === 'longtext') &&
+      !field.optional &&
+      !scalar.trim())
+  ) {
+    if (field.optional) return undefined;
+    throw new Error(`${label} is required.`);
+  }
+  return scalarValue(field.type, scalar, label);
+}
 function documentData(): Record<string, unknown> {
   if (!template.value!.manifest.shape) {
     try {
@@ -82,6 +143,7 @@ function documentData(): Record<string, unknown> {
   }
   const data: Record<string, unknown> = Object.create(null);
   for (const field of template.value!.manifest.shape.fields) {
+    if (boundFields.value.has(field.variable)) continue;
     const value = values.value[field.variable];
     if (field.type === 'list') {
       const items = Array.isArray(value) ? value : [];
@@ -91,24 +153,68 @@ function documentData(): Record<string, unknown> {
       }
       data[field.variable] = items.map((item, index) => {
         const label = `${field.label} item ${index + 1}`;
-        if (!item.trim()) throw new Error(`${label} is required.`);
+        if (typeof item !== 'string' || !item.trim())
+          throw new Error(`${label} is required.`);
         return scalarValue(field.itemType, item, label);
       });
       continue;
     }
-    const scalar = typeof value === 'string' ? value : '';
-    if (
-      scalar === '' ||
-      ((field.type === 'text' || field.type === 'longtext') &&
-        !field.optional &&
-        !scalar.trim())
-    ) {
-      if (field.optional) continue;
-      throw new Error(`${field.label} is required.`);
+    if (field.type === 'object-list') {
+      const items = (Array.isArray(value) ? value : []) as ObjectRow[];
+      if (!items.length) {
+        if (field.optional) continue;
+        throw new Error(`${field.label} is required.`);
+      }
+      data[field.variable] = items.map((item, index) =>
+        Object.fromEntries(
+          field.properties.flatMap((property) => {
+            const label = `${field.label} item ${index + 1}: ${property.label}`;
+            const raw = Object.hasOwn(item, property.variable)
+              ? item[property.variable]
+              : undefined;
+            const value = scalarFieldValue(property, raw, label);
+            return value === undefined ? [] : [[property.variable, value]];
+          }),
+        ),
+      );
+      continue;
     }
-    data[field.variable] = scalarValue(field.type, scalar, field.label);
+    const scalar = scalarFieldValue(field, value);
+    if (scalar !== undefined) data[field.variable] = scalar;
   }
   return data;
+}
+function documentBindings() {
+  const result: (Omit<DatasetBinding, 'count'> & { count?: number })[] = [];
+  for (const field of template.value!.manifest.shape?.fields ?? []) {
+    const binding = bindings.value[field.variable];
+    if (!binding || field.type !== 'object-list') continue;
+    if (!binding.datasetId)
+      throw new Error(`Choose a dataset for ${field.label}.`);
+    if (
+      binding.mode !== 'all' &&
+      (!Number.isInteger(binding.count) ||
+        binding.count < 1 ||
+        binding.count > 1000)
+    ) {
+      throw new Error(`Enter a row count from 1 to 1,000 for ${field.label}.`);
+    }
+    for (const property of field.properties) {
+      if (
+        !property.optional &&
+        !Object.hasOwn(binding.columns, property.variable)
+      ) {
+        throw new Error(
+          `Choose a column for ${field.label}: ${property.label}.`,
+        );
+      }
+    }
+    if (!Object.keys(binding.columns).length)
+      throw new Error(`Choose at least one column for ${field.label}.`);
+    const { count, ...selection } = binding;
+    result.push(selection.mode === 'all' ? selection : { ...selection, count });
+  }
+  return result;
 }
 async function generate() {
   if (busy.value || !template.value) return;
@@ -117,6 +223,8 @@ async function generate() {
   try {
     const body = new FormData();
     body.append('data', JSON.stringify(documentData()));
+    const selected = documentBindings();
+    if (selected.length) body.append('bindings', JSON.stringify(selected));
     let total = 0;
     for (const alias of aliases.value) {
       const file = files.value[alias];
@@ -208,7 +316,19 @@ async function generate() {
               :show-validation="showValidation"
               :fields="template.manifest.shape.fields"
               :disabled="busy"
-            />
+              :bound-fields="boundFields"
+            >
+              <template #object-list-source="{ field }">
+                <DatasetBindingInput
+                  v-model="bindings[field.variable]"
+                  :field="field"
+                  :datasets="datasets"
+                  :loading="datasetLoading"
+                  :error="datasetError"
+                  @load="loadDatasets"
+                />
+              </template>
+            </DynamicForm>
             <JsonEditor v-else v-model="json" :disabled="busy" />
             <ResourceUploads
               v-model="files"

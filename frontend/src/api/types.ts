@@ -20,8 +20,11 @@ interface ShapeFieldBase {
   optional: boolean;
 }
 
-export type ShapeField = ShapeFieldBase &
-  ({ type: FieldType } | { type: 'list'; itemType: FieldType });
+export type ScalarField = ShapeFieldBase & { type: FieldType };
+export type ShapeField =
+  | ScalarField
+  | (ShapeFieldBase & { type: 'list'; itemType: FieldType })
+  | (ShapeFieldBase & { type: 'object-list'; properties: ScalarField[] });
 
 export interface Template {
   id: string;
@@ -54,3 +57,31 @@ export type AiDraftRequest =
   | { source: string; description: string };
 
 export type AiDraftResponse = { tex: string };
+
+export interface DatasetColumn {
+  id: string;
+  label: string;
+  type: FieldType;
+  optional: boolean;
+}
+
+export interface Dataset {
+  id: string;
+  name: string;
+  columns: DatasetColumn[];
+  updatedAt: string;
+}
+
+export interface DatasetRow {
+  id: string;
+  position: number;
+  values: Record<string, string | number | boolean>;
+}
+
+export interface DatasetBinding {
+  field: string;
+  datasetId: string;
+  mode: 'first' | 'last' | 'random' | 'all';
+  count: number;
+  columns: Record<string, string>;
+}

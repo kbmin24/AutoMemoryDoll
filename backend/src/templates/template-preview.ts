@@ -21,7 +21,18 @@ export function buildPreviewData(
         boolean: true,
       };
       const sample =
-        field.type === 'list' ? [values[field.itemType]] : values[field.type];
+        field.type === 'list'
+          ? [values[field.itemType]]
+          : field.type === 'object-list'
+            ? [
+                Object.fromEntries(
+                  field.properties.map((property) => [
+                    property.variable,
+                    values[property.type],
+                  ]),
+                ),
+              ]
+            : values[field.type];
       return [field.variable, sample];
     }),
   );

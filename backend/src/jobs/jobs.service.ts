@@ -1,3 +1,4 @@
+import { resolveDatasetBindings } from './dataset-bindings.js';
 import { withTemplateLock } from '../templates/template-lock.js';
 import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { JobError } from './jobs.errors.js';
@@ -46,20 +47,37 @@ export function validateGenerationData(
   if (!isObject(input)) throw new JobError('Invalid generation data');
   if (manifest.shape === null) return input;
 
-  const known = new Set(manifest.shape.fields.map((field) => field.variable));
+  return validateFields(manifest.shape.fields, input);
+}
+
+function validateFields(
+  fields: NonNullable<ManifestV1['shape']>['fields'],
+  input: Record<string, unknown>,
+) {
+  const known = new Set(fields.map((field) => field.variable));
   if (Object.keys(input).some((key) => !known.has(key))) {
     throw new JobError('Invalid generation data');
   }
 
-  const data: Record<string, unknown> = {};
-  for (const field of manifest.shape.fields) {
-    const value = input[field.variable];
-    if (field.type === 'list') {
+  const entries: [string, unknown][] = [];
+  for (const field of fields) {
+    const value = Object.hasOwn(input, field.variable)
+      ? input[field.variable]
+      : undefined;
+    if (field.type === 'list' || field.type === 'object-list') {
       if (value === undefined && field.optional) continue;
       if (!Array.isArray(value)) throw new JobError('Invalid generation data');
       if (value.length === 0) {
         if (field.optional) continue;
         throw new JobError('Invalid generation data');
+      }
+      if (field.type === 'object-list') {
+        const objects = value.map((item: unknown) => {
+          if (!isObject(item)) throw new JobError('Invalid generation data');
+          return validateFields(field.properties, item);
+        });
+        entries.push([field.variable, objects]);
+        continue;
       }
       for (const item of value) {
         if (
@@ -72,7 +90,7 @@ export function validateGenerationData(
           throw new JobError('Invalid generation data');
         }
       }
-      data[field.variable] = value;
+      entries.push([field.variable, value]);
       continue;
     }
     if (
@@ -95,9 +113,9 @@ export function validateGenerationData(
       if (typeof value !== 'boolean')
         throw new JobError('Invalid generation data');
     }
-    data[field.variable] = value;
+    entries.push([field.variable, value]);
   }
-  return data;
+  return Object.fromEntries(entries);
 }
 
 export async function templateResourceAliases(
@@ -181,6 +199,7 @@ export async function submitGeneration(
     userId: string;
     templateId: string;
     data: unknown;
+    bindings?: unknown;
     uploads: ResourceUpload[];
   },
   logger: Logger = silentLogger,
@@ -195,8 +214,19 @@ export async function submitGeneration(
       storage,
       input.templateId,
       input.userId,
-      async (_tx, template) => {
-        const data = validateGenerationData(template.manifest, input.data);
+      async (tx, template) => {
+        const resolved =
+          input.bindings === undefined
+            ? input.data
+            : await resolveDatasetBindings(
+                db,
+                tx,
+                input.userId,
+                template.manifest,
+                input.data,
+                input.bindings,
+              );
+        const data = validateGenerationData(template.manifest, resolved);
         const inputDirectory = await storage.snapshot(input.templateId, jobId);
         return { inputDirectory, data };
       },

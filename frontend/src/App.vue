@@ -68,7 +68,7 @@ async function signOut() {
         />
       </RouterLink>
       <nav
-        class="order-3 flex basis-full shrink-0 gap-6 workspace:order-none workspace:basis-auto"
+        class="order-3 flex basis-full shrink-0 flex-wrap gap-x-6 gap-y-0 workspace:order-none workspace:basis-auto"
         v-if="session.user"
         aria-label="Main navigation"
       >
@@ -76,6 +76,11 @@ async function signOut() {
           class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
           to="/templates"
           >Templates</RouterLink
+        >
+        <RouterLink
+          class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"
+          to="/datasets"
+          >Datasets</RouterLink
         >
         <RouterLink
           class="flex min-h-11 items-center text-muted hover:text-base-content hover:underline hover:underline-offset-[10px]"

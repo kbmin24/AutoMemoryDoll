@@ -58,6 +58,23 @@ beforeEach(() => {
           },
           csrfToken: 'csrf',
         };
+      else if (path === '/api/datasets')
+        data = {
+          datasets: [
+            {
+              id: 'roster',
+              name: 'Roster',
+              columns: [
+                {
+                  id: 'student-name',
+                  label: 'Name',
+                  type: 'text',
+                  optional: false,
+                },
+              ],
+            },
+          ],
+        };
       else if (path.endsWith('/resources')) data = { aliases: ['logo'] };
       else if (path === '/api/templates/letter')
         data = {
@@ -119,6 +136,100 @@ async function upload() {
   await input.trigger('change');
 }
 describe('single generation', () => {
+  it.each(['random', 'all'] as const)(
+    'switches an object list between manual values and dataset selection (%s)',
+    async (mode) => {
+      fields = [
+        {
+          type: 'object-list',
+          variable: 'students',
+          label: 'Students',
+          optional: false,
+          properties: [
+            { type: 'text', variable: 'name', label: 'Name', optional: false },
+          ],
+        },
+      ];
+      await open();
+      await wrapper!
+        .get('[aria-label="Add item to Students"]')
+        .trigger('click');
+      await wrapper!.get('#field-students-0-name').setValue('Manual name');
+      await wrapper!.get('#source-students').setValue('dataset');
+      await flushPromises();
+      expect(wrapper!.get('#dataset-students').text()).toContain('Roster');
+      expect(wrapper!.find('#field-students-0-name').exists()).toBe(false);
+      await wrapper!.get('#source-students').setValue('manual');
+      expect(
+        (wrapper!.get('#field-students-0-name').element as HTMLInputElement)
+          .value,
+      ).toBe('Manual name');
+      await wrapper!.get('#source-students').setValue('dataset');
+      await flushPromises();
+      await wrapper!.get('#dataset-students').setValue('roster');
+      await wrapper!.get('#mode-students').setValue(mode);
+      if (mode === 'all') {
+        expect(wrapper!.find('#count-students').exists()).toBe(false);
+      } else {
+        await wrapper!.get('#count-students').setValue('2');
+      }
+      await wrapper!.get('#mapping-students-name').setValue('student-name');
+      await upload();
+      await submit();
+      const request = calls.find((call) => call.path.endsWith('/generations'))!;
+      const body = request.init.body as FormData;
+      expect(JSON.parse(String(body.get('data')))).toEqual({});
+      expect(JSON.parse(String(body.get('bindings')))).toEqual([
+        {
+          field: 'students',
+          datasetId: 'roster',
+          mode,
+          ...(mode === 'all' ? {} : { count: 2 }),
+          columns: { name: 'student-name' },
+        },
+      ]);
+      expect(body.get('logo')).toBeInstanceOf(File);
+    },
+  );
+
+  it('submits manually entered typed objects and omits optional properties', async () => {
+    fields = [
+      {
+        type: 'object-list',
+        variable: 'students',
+        label: 'Students',
+        optional: false,
+        properties: [
+          { type: 'text', variable: 'name', label: 'Name', optional: false },
+          {
+            type: 'number',
+            variable: 'score',
+            label: 'Score',
+            optional: false,
+          },
+          {
+            type: 'boolean',
+            variable: 'present',
+            label: 'Present',
+            optional: true,
+          },
+        ],
+      },
+    ];
+    await open();
+    await wrapper!.get('[aria-label="Add item to Students"]').trigger('click');
+    await wrapper!.get('#field-students-0-name').setValue('Ada');
+    await wrapper!.get('#field-students-0-score').setValue('0');
+    await upload();
+    await submit();
+    const request = calls.find((call) => call.path.endsWith('/generations'))!;
+    expect(
+      JSON.parse(String((request.init.body as FormData).get('data'))),
+    ).toEqual({
+      students: [{ name: 'Ada', score: 0 }],
+    });
+  });
+
   it('sends typed JSON with zero and false, omits optional blanks, uploads aliases, and keeps the form beside preview', async () => {
     const router = await open();
     expect(wrapper!.find('textarea#field-notes').exists()).toBe(true);

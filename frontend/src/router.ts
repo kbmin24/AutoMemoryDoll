@@ -11,6 +11,8 @@ import AdminUsersView from './views/AdminUsersView.vue';
 import TemplatesView from './views/TemplatesView.vue';
 
 const TemplateWorkspaceView = () => import('./views/TemplateWorkspaceView.vue');
+const DatasetsView = () => import('./views/DatasetsView.vue');
+const DatasetView = () => import('./views/DatasetView.vue');
 const GenerateView = () => import('./views/GenerateView.vue');
 
 export function createAppRouter(history: RouterHistory = createWebHistory()) {
@@ -32,6 +34,9 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
         component: GenerateView,
         meta: { workspace: true },
       },
+      { path: '/datasets', component: DatasetsView },
+      { path: '/datasets/new', component: DatasetView },
+      { path: '/datasets/:id', component: DatasetView },
       { path: '/jobs', component: JobsView },
       {
         path: '/jobs/:id',

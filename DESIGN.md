@@ -300,6 +300,26 @@ Indexes requested: primary-key B-tree indexes on `users.id` and `templates.id`; 
 
 No dataset tables are included in the MVP. No database-backed session table is planned because authentication uses JWT. PDFs and job history are retained without automatic expiry in this MVP. A deleted template is soft-deleted so existing jobs and their PDFs remain available.
 
+### Post-MVP datasets
+
+On 2026-11-22, the owner selected one PostgreSQL `jsonb` object per dataset row. Users define typed columns, enter rows manually or import CSV, and can select first, last, random, or all rows for template generation. The backend resolves dataset selections before dispatch and the compiler receives concrete JSON.
+
+The owner approved private, owner-scoped datasets with cascading row deletion. Columns use the scalar template types `text`, `longtext`, `number`, and `boolean`. Each column can be required or optional and has a stable ID used as its key in each row. The schema can change while a dataset is empty. Once it has rows, column edits are limited to renames.
+
+The manual management API lives at `/api/datasets`, with row management under `/:id/rows`. Row updates replace the values object. Omit optional values and supply all required values. Rows are listed by increasing position, with a default page size of 50 and a maximum of 100. Pass `nextAfter` as `after` to continue. Appends use increasing positions and deletion leaves gaps.
+
+CSV imports use `POST /api/datasets/:id/import` with a multipart `file` field. Imports accept UTF-8 CSV up to 5 MiB, 1,000 data rows, and 100 columns per file. Headers must match the current dataset column labels exactly, in any order and without duplicates. A valid import appends every row atomically in file order and returns the imported row count. Errors identify the first invalid record and column when applicable without including cell contents.
+
+Text and long text preserve whitespace. Empty optional text cells are omitted, and empty required text cells are stored as empty strings. Numbers and booleans are trimmed. They accept finite decimal values (including scientific notation) or case-insensitive `true` and `false`, respectively. Blank optional numbers and booleans are omitted, and blank required numbers and booleans are rejected. Each dataset can contain up to 1,000 rows and 100 columns. Manual appends and CSV imports share the total row limit. An import that exceeds the remaining capacity is rejected in full. Deleting rows frees capacity. Existing data is preserved.
+
+Template manifests support `object-list` fields. A field's `properties` array declares at least one scalar property, using the existing variable, display label, type, and optional flag. Property names must be unique within each object. The template editor, preview, and manual generation form support this shape.
+
+Generation requests can include a `bindings` array alongside `data`. For JSON, send the array directly. For multipart, send it as a JSON-encoded text field. Each binding supplies `field` (the template variable), `datasetId`, `mode` (`first`, `last`, `random`, or `all`), `count` (1–1,000, omitted for `all`), and `columns` (an object mapping property variable names to dataset column IDs). Each required property needs a matching column of the same scalar type. A field cannot have both a binding and a literal value.
+
+The backend selects from an owner-scoped dataset under the dataset lock. It returns up to the requested number of rows in dataset order, including for a random sample without replacement. The `all` mode selects every row in dataset order. The existing generation validation checks resolved objects, rejects missing required values, and allows empty selections only for optional lists. Submission saves only the concrete values in `data.json` before queueing.
+
+The signed-in Datasets workspace provides dataset creation, schema settings, paginated row editing, and CSV import. It lists datasets by last modification, newest first. Schema changes and successful row writes update that timestamp. In the generation form, each object-list field defaults to manual entry and can switch to a dataset, a row selection, and a column mapping. Switching sources preserves the manual values until the form is left.
+
 ## Repository structure
 
 ```text
