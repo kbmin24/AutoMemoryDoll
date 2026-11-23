@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import VuePdfEmbed from 'vue-pdf-embed';
 import GenerationPreview from '../src/components/GenerationPreview.vue';
 import { api } from '../src/api/client';
 import type { GenerationJob } from '../src/api/types';
+
+vi.mock('vue-pdf-embed', () => ({
+  default: {
+    props: ['source', 'width'],
+    template:
+      '<div :data-pdf-source="source"><slot v-for="page in 3" name="before-page" :page="page" /></div>',
+  },
+}));
 
 vi.mock('../src/api/client', () => ({ api: vi.fn() }));
 const apiMock = vi.mocked(api);
@@ -25,7 +34,6 @@ beforeEach(() => {
   vi.useFakeTimers();
   current = makeJob('queued');
   pdfError = false;
-  vi.stubGlobal('navigator', { pdfViewerEnabled: true });
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -108,9 +116,91 @@ it('shows a green Generated bar, timestamp information, icon download, and only 
   expect(bar().get('[role=tooltip]').attributes('style')).toContain(
     'display: none',
   );
-  expect(wrapper!.get('iframe').attributes('src')).toBe('blob:preview');
+  expect(wrapper!.get('[data-pdf-source]').attributes('data-pdf-source')).toBe(
+    'blob:preview',
+  );
   expect(wrapper!.text()).not.toContain('Submitted ');
 });
+it('zooms the rendered PDF without fetching it again', async () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private notify: ResizeObserverCallback) {}
+      observe() {
+        this.notify(
+          [{ contentRect: { width: 400 } } as ResizeObserverEntry],
+          this as unknown as ResizeObserver,
+        );
+      }
+      disconnect() {}
+    },
+  );
+  current = makeJob('ok');
+  await open(current);
+  const pdf = wrapper!.getComponent(VuePdfEmbed);
+  const zoomIn = bar().get('button[aria-label="Zoom in"]');
+  const zoomOut = bar().get('button[aria-label="Zoom out"]');
+  const percentage = bar().get('output[aria-label="Zoom level"]');
+  expect(zoomOut.element.nextElementSibling).toBe(percentage.element);
+  expect(percentage.element.nextElementSibling).toBe(zoomIn.element);
+  expect(percentage.text()).toBe('100%');
+  expect(pdf.props('width')).toBe(400);
+  const calls = apiMock.mock.calls.length;
+  await zoomIn.trigger('click');
+  expect(pdf.props('width')).toBe(500);
+  expect(percentage.text()).toBe('125%');
+  await zoomOut.trigger('click');
+  expect(pdf.props('width')).toBe(400);
+  for (let step = 0; step < 2; step += 1) await zoomOut.trigger('click');
+  expect(pdf.props('width')).toBe(200);
+  expect(pdf.attributes('style')).toContain('width: 200px');
+  expect(pdf.classes()).toContain('mx-auto');
+  expect(percentage.text()).toBe('50%');
+  expect(zoomOut.attributes('disabled')).toBeUndefined();
+  await zoomOut.trigger('click');
+  expect(pdf.props('width')).toBe(100);
+  expect(percentage.text()).toBe('25%');
+  expect(zoomOut.attributes('disabled')).toBeDefined();
+  for (let step = 0; step < 7; step += 1) await zoomIn.trigger('click');
+  expect(pdf.props('width')).toBe(800);
+  expect(zoomIn.attributes('disabled')).toBeDefined();
+  expect(apiMock).toHaveBeenCalledTimes(calls);
+});
+
+it('shows the page count and navigates by page number or scrolling', async () => {
+  current = makeJob('ok');
+  await open(current);
+  const pdf = wrapper!.getComponent(VuePdfEmbed);
+  pdf.vm.$emit('loaded', { numPages: 3 });
+  pdf.vm.$emit('rendered');
+  await wrapper!.vm.$nextTick();
+
+  const input = bar().get<HTMLInputElement>('input[aria-label="Current page"]');
+  expect(input.element.value).toBe('1');
+  expect(input.element.nextElementSibling?.textContent).toBe('of 3');
+  const markers = pdf.findAll('[data-pdf-page]');
+  const viewport = pdf.element.parentElement!.parentElement!;
+  Object.defineProperties(viewport, {
+    scrollHeight: { value: 1500 },
+    clientHeight: { value: 400 },
+  });
+  markers.forEach((marker, index) => {
+    vi.spyOn(marker.element, 'getBoundingClientRect').mockImplementation(
+      () => new DOMRect(0, 500 * index - viewport.scrollTop, 0, 0),
+    );
+  });
+
+  input.element.value = '3';
+  await input.trigger('keydown', { key: 'Enter' });
+  expect(viewport.scrollTop).toBe(1000);
+  await input.setValue('9');
+  expect(input.element.value).toBe('3');
+  viewport.scrollTop = 550;
+  viewport.dispatchEvent(new Event('scroll'));
+  await wrapper!.vm.$nextTick();
+  expect(input.element.value).toBe('2');
+});
+
 it('keeps hover details open while crossing the toolbar and closes them when leaving it', async () => {
   current = makeJob('ok');
   await open(current);
@@ -199,19 +289,25 @@ it('shows PDF load failures in the bar and can retry the preview', async () => {
   pdfError = false;
   await bar().get('button[aria-label="Retry preview"]').trigger('click');
   await flushPromises();
-  expect(wrapper!.find('iframe').exists()).toBe(true);
+  expect(wrapper!.find('[data-pdf-source]').exists()).toBe(true);
   expect(bar().attributes('data-state')).toBe('generated');
 });
-it('keeps Generated and download available when the browser cannot embed PDFs', async () => {
-  vi.stubGlobal('navigator', { pdfViewerEnabled: false });
+it('keeps download available and allows retry when PDF rendering fails', async () => {
   current = makeJob('ok');
   await open(current);
-  expect(bar().attributes('data-state')).toBe('generated');
-  expect(bar().get('[role=tooltip]').text()).toContain(
-    'browser does not support PDF preview',
-  );
-  expect(wrapper!.find('iframe').exists()).toBe(false);
+  wrapper!
+    .getComponent(VuePdfEmbed)
+    .vm.$emit('rendering-failed', new Error('Invalid PDF'));
+  await wrapper!.vm.$nextTick();
+  expect(bar().attributes('data-state')).toBe('error');
+  expect(bar().get('[role=tooltip]').text()).toContain('PDF preview');
   expect(wrapper!.find('a[aria-label="Download PDF"]').exists()).toBe(true);
+  await bar().get('button[aria-label="Retry preview"]').trigger('click');
+  await flushPromises();
+  expect(wrapper!.get('[data-pdf-source]').attributes('data-pdf-source')).toBe(
+    'blob:preview',
+  );
+  expect(bar().attributes('data-state')).toBe('generated');
 });
 it('does not restart polling when an in-flight response finishes after unmount', async () => {
   let complete!: (value: unknown) => void;

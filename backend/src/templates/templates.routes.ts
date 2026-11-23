@@ -28,6 +28,7 @@ import { AiDraftError, type AiDraftService } from '../ai/ai.service.js';
 import { validateManifest } from './shape.js';
 import { workspaceRoutes } from './workspace.routes.js';
 import { generationRoutes } from '../jobs/jobs.routes.js';
+import { recordTemplateView } from './templates.repository.js';
 import {
   templateResourceAliases,
   type QueuePublisher,
@@ -127,6 +128,24 @@ export function templatesRoutes(
       response.json({
         aliases: await templateResourceAliases(storage, templateId),
       });
+    },
+  );
+
+  router.post(
+    '/:id/view',
+    requireCsrf(config),
+    id,
+    checkExact([], { locations: ['body', 'query'] }),
+    validateRequest,
+    async (request, response) => {
+      const viewerId = userId(request);
+      const template = await getTemplate(
+        db,
+        viewerId,
+        String(request.params.id),
+      );
+      await recordTemplateView(db, viewerId, template.id);
+      response.json({ template: templateDto(template) });
     },
   );
 

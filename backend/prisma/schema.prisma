@@ -8,17 +8,18 @@ datasource db {
 }
 
 model User {
-  id           String          @id @default(uuid()) @db.Uuid
-  username     String          @unique
-  displayId    String          @map("display_id")
-  passwordHash String          @map("password_hash")
-  role         String          @default("user")
-  disabled     Boolean         @default(false)
-  tokenVersion Int             @default(0) @map("token_version")
-  createdAt    DateTime?       @default(now()) @map("created_at") @db.Timestamptz(6)
-  templates    Template[]
-  jobs         GenerationJob[]
-  datasets     Dataset[]
+  id            String             @id @default(uuid()) @db.Uuid
+  username      String             @unique
+  displayId     String             @map("display_id")
+  passwordHash  String             @map("password_hash")
+  role          String             @default("user")
+  disabled      Boolean            @default(false)
+  tokenVersion  Int                @default(0) @map("token_version")
+  createdAt     DateTime?          @default(now()) @map("created_at") @db.Timestamptz(6)
+  templates     Template[]
+  jobs          GenerationJob[]
+  datasets      Dataset[]
+  templateViews TemplateViewedAt[]
 
   @@map("users")
 }
@@ -50,16 +51,29 @@ model DatasetRow {
 }
 
 model Template {
-  id        String          @id @default(uuid()) @db.Uuid
-  ownedBy   String          @map("owned_by") @db.Uuid
-  owner     User            @relation(fields: [ownedBy], references: [id])
+  id        String             @id @default(uuid()) @db.Uuid
+  ownedBy   String             @map("owned_by") @db.Uuid
+  owner     User               @relation(fields: [ownedBy], references: [id])
   name      String
-  manifest  Json            @db.JsonB
-  deletedAt DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  manifest  Json               @db.JsonB
+  deletedAt DateTime?          @map("deleted_at") @db.Timestamptz(6)
   jobs      GenerationJob[]
+  views     TemplateViewedAt[]
 
   @@index([ownedBy])
   @@map("templates")
+}
+
+model TemplateViewedAt {
+  templateId String   @map("template_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  viewedAt   DateTime @default(now()) @map("viewed_at") @db.Timestamptz(6)
+  template   Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([templateId, userId])
+  @@index([userId])
+  @@map("template_viewed_at")
 }
 
 model GenerationJob {

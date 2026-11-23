@@ -5,18 +5,35 @@ import type { GenerationJob } from '../api/types';
 const props = withDefaults(
   defineProps<{
     job: GenerationJob | null;
+    pageCount: number;
     submitting?: boolean;
     error?: string;
-    notice?: string;
     retryLabel?: string;
     retrying?: boolean;
   }>(),
-  { submitting: false, error: '', notice: '', retrying: false },
+  { submitting: false, error: '', retrying: false },
 );
+const page = defineModel<number>('page', { required: true });
+const zoom = defineModel<number>('zoom', { required: true });
+const minZoom = 25;
+const maxZoom = 200;
+const zoomStep = 25;
 const emit = defineEmits<{ retry: [] }>();
 const informationOpen = ref(false);
 const informationButton = ref<HTMLButtonElement | null>(null);
 const informationId = useId();
+
+function changePage(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  const value = input.value.trim();
+  const requested = Number(value);
+  if (/^\d+$/.test(value) && requested >= 1 && requested <= props.pageCount) {
+    page.value = requested;
+    input.value = String(requested);
+    return;
+  }
+  input.value = String(page.value);
+}
 
 function handleInformationFocusOut(event: FocusEvent) {
   const container = event.currentTarget as HTMLElement;
@@ -53,7 +70,7 @@ const information = computed(() => {
   if (job.status === 'failed') return job.message;
   const submittedAt = new Date(job.timestamp).toLocaleString();
   if (job.status === 'ok') {
-    return `Generation succeeded for document submitted at ${submittedAt}.${props.notice ? ` ${props.notice}` : ''}`;
+    return `Generation succeeded for document submitted at ${submittedAt}.`;
   }
   return `${job.message} — submitted at ${submittedAt}.`;
 });
@@ -64,7 +81,7 @@ const canDownload = computed(
 
 <template>
   <header
-    class="preview-toolbar relative flex min-h-13 min-w-0 shrink-0 items-center gap-3 rounded-t-box px-4"
+    class="preview-toolbar relative flex min-h-13 min-w-0 shrink-0 flex-wrap items-center gap-x-1 rounded-t-box px-4 sm:gap-x-3"
     :data-state="state"
     :role="state === 'error' ? 'alert' : 'status'"
     aria-label="Generation status"
@@ -126,22 +143,66 @@ const canDownload = computed(
     >
       Retry
     </button>
-    <a
-      v-if="canDownload && job"
-      class="btn btn-ghost btn-square ml-auto shrink-0"
-      :href="`/api/jobs/${encodeURIComponent(job.id)}/pdf`"
-      aria-label="Download PDF"
-      ><i class="fa-solid fa-download" aria-hidden="true"></i
-    ></a>
-    <button
-      v-else
-      type="button"
-      class="btn btn-ghost btn-square ml-auto shrink-0"
-      aria-label="Download PDF"
-      disabled
-    >
-      <i class="fa-solid fa-download" aria-hidden="true"></i>
-    </button>
+    <div class="ml-auto flex shrink-0 items-center">
+      <template v-if="state === 'generated'">
+        <div
+          v-if="pageCount"
+          class="mr-2 flex items-center gap-1 text-sm tabular-nums"
+        >
+          <input
+            type="text"
+            inputmode="numeric"
+            aria-label="Current page"
+            class="input input-sm w-12 px-1 text-center"
+            :value="page"
+            @change="changePage"
+            @keydown.enter.prevent="changePage"
+          />
+          <span>of {{ pageCount }}</span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-ghost btn-square"
+          aria-label="Zoom out"
+          title="Zoom out"
+          :disabled="zoom <= minZoom"
+          @click="zoom -= zoomStep"
+        >
+          <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+        </button>
+        <output
+          aria-label="Zoom level"
+          class="w-11 text-center text-sm tabular-nums"
+          >{{ zoom }}%</output
+        >
+        <button
+          type="button"
+          class="btn btn-ghost btn-square"
+          aria-label="Zoom in"
+          title="Zoom in"
+          :disabled="zoom >= maxZoom"
+          @click="zoom += zoomStep"
+        >
+          <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+        </button>
+      </template>
+      <a
+        v-if="canDownload && job"
+        class="btn btn-ghost btn-square"
+        :href="`/api/jobs/${encodeURIComponent(job.id)}/pdf`"
+        aria-label="Download PDF"
+        ><i class="fa-solid fa-download" aria-hidden="true"></i
+      ></a>
+      <button
+        v-else
+        type="button"
+        class="btn btn-ghost btn-square"
+        aria-label="Download PDF"
+        disabled
+      >
+        <i class="fa-solid fa-download" aria-hidden="true"></i>
+      </button>
+    </div>
   </header>
 </template>
 

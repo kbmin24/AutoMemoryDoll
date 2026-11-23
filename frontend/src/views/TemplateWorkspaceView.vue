@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ParentLink from "../components/ParentLink.vue";
 import { generate } from "random-words";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
@@ -236,7 +237,10 @@ async function load() {
   if (creating.value) return;
   loading.value = true;
   try {
-    const result = await api<{ template: Template }>(base.value);
+    const result = await api<{ template: Template }>(
+      `${base.value}/view`,
+      "POST",
+    );
     name.value = savedName.value = result.template.name;
     manifest.value = result.template.manifest;
     savedManifest.value = JSON.stringify(manifest.value);
@@ -647,18 +651,14 @@ async function fileAction(
     class="workspace-view flex min-h-0 flex-1 flex-col"
     :class="{ 'overflow-hidden': !creating }"
   >
-    <div
-      class="flex min-w-0 flex-col items-start justify-between workspace:flex-row workspace:gap-6"
-    >
-      <div>
-        <h1>
-          {{ creating ? "New template" : savedName || "Template workspace" }}
-        </h1>
-        <p v-if="creating">
-          Manage your template files and the values document creators enter.
-        </p>
-      </div>
-      <RouterLink class="link" to="/templates">All templates</RouterLink>
+    <ParentLink to="/templates" label="Templates" />
+    <div>
+      <h1>
+        {{ creating ? "New template" : savedName || "Template workspace" }}
+      </h1>
+      <p v-if="creating">
+        Manage your template files and the values document creators enter.
+      </p>
     </div>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="status" role="status">{{ status }}</p>

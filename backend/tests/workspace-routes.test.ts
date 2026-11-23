@@ -36,7 +36,7 @@ function dbForTests() {
         template &&
         template.ownedBy === where.ownedBy &&
         template.deletedAt === null
-          ? [template]
+          ? [{ ...template, views: [] }]
           : [],
       ),
       findFirst: vi.fn(async ({ where }: any) =>

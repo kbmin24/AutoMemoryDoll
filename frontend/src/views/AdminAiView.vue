@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ParentLink from '../components/ParentLink.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api/client';
 
@@ -154,9 +155,7 @@ onUnmounted(() => window.clearInterval(timer));
 </script>
 
 <template>
-  <RouterLink class="link" to="/admin"
-    ><i class="fa-solid fa-arrow-left"></i> Admin</RouterLink
-  >
+  <ParentLink to="/admin" label="Admin" />
   <h1>AI</h1>
   <section
     v-if="usage"

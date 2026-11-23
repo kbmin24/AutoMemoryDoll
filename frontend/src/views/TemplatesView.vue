@@ -41,11 +41,8 @@ async function remove() {
 }
 </script>
 <template>
-  <h1>Templates</h1>
-  <RouterLink class="btn btn-outline" to="/templates/new"
-    >New template</RouterLink
-  >
-  <p>Your private document templates.</p>
+  <RouterLink class="btn btn-outline float-right" to="/templates/new"><i class="fa-solid fa-plus"></i> New</RouterLink>
+  <h1>My Templates</h1>
   <p v-if="error" role="alert">
     {{ error }}
     <button class="btn" :disabled="busy" @click="load">Retry</button>

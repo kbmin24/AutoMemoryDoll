@@ -7,6 +7,13 @@ import { createAppRouter } from '../src/router';
 import { session } from '../src/api/client';
 import type { ShapeField } from '../src/api/types';
 
+vi.mock('vue-pdf-embed', () => ({
+  default: {
+    props: ['source'],
+    template: '<div :data-pdf-source="source" />',
+  },
+}));
+
 let wrapper: VueWrapper | undefined;
 let fields: ShapeField[] | null;
 let states: string[];
@@ -24,7 +31,6 @@ const job = (status: string) => ({
 });
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.stubGlobal('navigator', { pdfViewerEnabled: true });
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -76,7 +82,7 @@ beforeEach(() => {
           ],
         };
       else if (path.endsWith('/resources')) data = { aliases: ['logo'] };
-      else if (path === '/api/templates/letter')
+      else if (path === '/api/templates/letter/view' && init.method === 'POST')
         data = {
           template: {
             id: 'letter',
@@ -279,9 +285,9 @@ describe('single generation', () => {
         .get('button[aria-controls="generation-preview"]')
         .attributes('aria-pressed'),
     ).toBe('true');
-    expect(wrapper!.get('iframe[title="PDF preview"]').attributes('src')).toBe(
-      'blob:pdf',
-    );
+    expect(
+      wrapper!.get('[data-pdf-source]').attributes('data-pdf-source'),
+    ).toBe('blob:pdf');
     wrapper!.unmount();
     wrapper = undefined;
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:pdf');
@@ -420,7 +426,10 @@ describe('retained jobs', () => {
       'Generation succeeded for document submitted at',
     );
     expect(
-      wrapper!.get('[aria-label="Document preview"]').find('iframe').exists(),
+      wrapper!
+        .get('[aria-label="Document preview"]')
+        .find('[data-pdf-source]')
+        .exists(),
     ).toBe(true);
     expect(wrapper!.findAll('[aria-label="Generation status"]')).toHaveLength(
       1,
@@ -440,7 +449,7 @@ describe('retained jobs', () => {
     await bar.get('button[aria-label="Retry preview"]').trigger('click');
     await flushPromises();
     expect(bar.attributes('data-state')).toBe('generated');
-    expect(wrapper!.find('iframe[title="PDF preview"]').exists()).toBe(true);
+    expect(wrapper!.find('[data-pdf-source]').exists()).toBe(true);
   });
 
   it.each(['ok', 'failed'])(

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ParentLink from '../components/ParentLink.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '../api/client';
@@ -76,7 +77,7 @@ async function load() {
   error.value = '';
   try {
     const [metadata, resources] = await Promise.all([
-      api<{ template: Template }>(base),
+      api<{ template: Template }>(`${base}/view`, 'POST'),
       api<{ aliases: string[] }>(`${base}/resources`),
     ]);
     template.value = metadata.template;
@@ -255,10 +256,8 @@ async function generate() {
 </script>
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="mb-0">{{ template?.name ?? 'Generate document' }}</h1>
-      <RouterLink class="link" to="/templates">Templates</RouterLink>
-    </div>
+    <ParentLink to="/templates" label="Templates" />
+    <h1 class="mb-4">{{ template?.name ?? 'Generate document' }}</h1>
     <p v-if="loading" role="status">Loading template…</p>
     <p v-if="error && !template" role="alert">
       {{ error }}

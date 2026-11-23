@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ParentLink from '../components/ParentLink.vue';
 import { nextTick, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api/client';
@@ -204,10 +205,8 @@ function remove() {
 </script>
 
 <template>
-  <RouterLink to="/datasets" class="text-sm underline underline-offset-4"
-    >Datasets</RouterLink
-  >
-  <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+  <ParentLink to="/datasets" label="Datasets" />
+  <div class="flex flex-wrap items-center justify-between gap-3">
     <h1 class="min-w-0 [overflow-wrap:anywhere]">
       {{ id ? (dataset?.name ?? 'Dataset') : 'New dataset' }}
     </h1>

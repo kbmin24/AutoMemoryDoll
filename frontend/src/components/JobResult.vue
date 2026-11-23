@@ -10,7 +10,9 @@ const id = encodeURIComponent(props.jobId);
 const job = ref<GenerationJob | null>(null);
 const error = ref('');
 const previewError = ref('');
-const previewNotice = ref('');
+const zoom = ref(100);
+const page = ref(1);
+const pageCount = ref(0);
 const previewAttempt = ref(0);
 const loading = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -38,6 +40,8 @@ function retry() {
     void load();
   } else {
     previewError.value = '';
+    page.value = 1;
+    pageCount.value = 0;
     previewAttempt.value += 1;
   }
 }
@@ -53,10 +57,12 @@ onUnmounted(() => {
     class="flex min-h-0 flex-1 flex-col rounded-box border border-outline bg-base-300"
   >
     <JobStatusBar
+      v-model:zoom="zoom"
+      v-model:page="page"
+      :page-count="pageCount"
       :job="job"
       :submitting="loading && !job"
       :error="error || previewError"
-      :notice="previewNotice"
       :retry-label="
         error ? 'Retry status' : previewError ? 'Retry preview' : undefined
       "
@@ -68,9 +74,11 @@ onUnmounted(() => {
         v-if="job?.status === 'ok'"
         :key="previewAttempt"
         :job-id="jobId"
+        v-model:page="page"
+        :zoom="zoom"
         compact
+        @page-count="pageCount = $event"
         @error="previewError = $event"
-        @unavailable="previewNotice = $event"
       />
     </div>
   </section>

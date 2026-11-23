@@ -1,13 +1,34 @@
-import type { Prisma } from '../generated/prisma/client.js';
+import { Prisma } from '../generated/prisma/client.js';
+import { databaseSchema } from '../db/prisma.js';
+import type { ManifestV1 } from '../contracts.js';
 import type { Database } from '../users/users.repository.js';
 type TemplateDatabase = Pick<Database, 'template'>;
-import type { ManifestV1 } from '../contracts.js';
 
-export function listOwnedTemplates(db: TemplateDatabase, userId: string) {
-  return db.template.findMany({
+export async function listOwnedTemplates(db: TemplateDatabase, userId: string) {
+  const templates = await db.template.findMany({
     where: { ownedBy: userId, deletedAt: null },
-    orderBy: { name: 'asc' },
+    include: { views: { where: { userId }, select: { viewedAt: true } } },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
   });
+  return templates.sort((left, right) => {
+    const leftViewed = left.views[0]?.viewedAt.getTime() ?? -Infinity;
+    const rightViewed = right.views[0]?.viewedAt.getTime() ?? -Infinity;
+    return rightViewed === leftViewed ? 0 : rightViewed - leftViewed;
+  });
+}
+
+export function recordTemplateView(
+  db: Database,
+  userId: string,
+  templateId: string,
+) {
+  const schema = Prisma.raw(`"${databaseSchema(db).replaceAll('"', '""')}"`);
+  return db.$executeRaw(Prisma.sql`
+    INSERT INTO ${schema}."template_viewed_at" ("template_id", "user_id", "viewed_at")
+    VALUES (${templateId}::uuid, ${userId}::uuid, clock_timestamp())
+    ON CONFLICT ("template_id", "user_id")
+    DO UPDATE SET "viewed_at" = clock_timestamp()
+  `);
 }
 
 export function findOwnedTemplate(

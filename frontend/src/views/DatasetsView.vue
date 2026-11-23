@@ -29,11 +29,9 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center justify-between gap-3">
+  <div class="mb-4">
+    <RouterLink class="btn btn-outline float-right" to="/datasets/new"><i class="fa-solid fa-plus"></i> New</RouterLink>
     <h1>Datasets</h1>
-    <RouterLink class="btn btn-primary" to="/datasets/new"
-      >New dataset</RouterLink
-    >
   </div>
   <p v-if="loading" role="status">Loading datasets…</p>
   <p v-else-if="error" role="alert">

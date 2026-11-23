@@ -172,6 +172,57 @@ describe.skipIf(!baseUrl)('template persistence with PostgreSQL', () => {
       });
       const ownerCookie = ownerLogin.headers['set-cookie'][0];
       const strangerCookie = strangerLogin.headers['set-cookie'][0];
+      const second = await createTemplate(db, storage, owner.id, 'Zebra', {
+        version: 1,
+        shape: null,
+      });
+      const view = (id: string) =>
+        request(app)
+          .post(`/api/templates/${id}/view`)
+          .set('Cookie', ownerCookie)
+          .set('X-CSRF-Token', ownerLogin.body.csrfToken);
+      const list = async () =>
+        (
+          await request(app)
+            .get('/api/templates')
+            .set('Cookie', ownerCookie)
+            .expect(200)
+        ).body.templates.map(({ id }: { id: string }) => id);
+
+      expect(await list()).toEqual([created.id, second.id]);
+      await request(app)
+        .get(`/api/templates/${second.id}`)
+        .set('Cookie', ownerCookie)
+        .expect(200);
+      expect(await list()).toEqual([created.id, second.id]);
+      await request(app)
+        .post(`/api/templates/${second.id}/view`)
+        .set('Cookie', ownerCookie)
+        .expect(403);
+      await request(app)
+        .post(`/api/templates/${second.id}/view`)
+        .set('Cookie', strangerCookie)
+        .set('X-CSRF-Token', strangerLogin.body.csrfToken)
+        .expect(404);
+      const visits = await Promise.all([view(second.id), view(second.id)]);
+      expect(visits.map(({ status }) => status)).toEqual([200, 200]);
+      expect(visits[0].body.template.id).toBe(second.id);
+      expect(await list()).toEqual([second.id, created.id]);
+      await db.templateViewedAt.updateMany({
+        where: { templateId: second.id },
+        data: { viewedAt: new Date('2020-01-01T00:00:00Z') },
+      });
+      await view(created.id).expect(200);
+      expect(await list()).toEqual([created.id, second.id]);
+      await view(second.id).expect(200);
+      expect(await list()).toEqual([second.id, created.id]);
+      expect(
+        await db.templateViewedAt.count({ where: { templateId: second.id } }),
+      ).toBe(1);
+      await softDeleteTemplate(db, storage, owner.id, second.id);
+      await view(second.id).expect(404);
+      expect(await list()).toEqual([created.id]);
+
       expect(
         (
           await request(app)

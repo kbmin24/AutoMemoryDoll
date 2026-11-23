@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ParentLink from '../components/ParentLink.vue';
 import { onMounted, ref } from 'vue';
 import { api, session } from '../api/client';
 import type { User } from '../api/types';
@@ -72,7 +73,7 @@ async function update(user: User, action: 'disabled' | 'role') {
 }
 </script>
 <template>
-  <RouterLink class="link" to="/admin"><i class="fa-solid fa-arrow-left"></i> Admin</RouterLink>
+  <ParentLink to="/admin" label="Admin" />
   <h1>Users</h1>
   <p>Manage accounts. Document work stays private to each user.</p>
   <p v-if="error" role="alert">{{ error }}</p>

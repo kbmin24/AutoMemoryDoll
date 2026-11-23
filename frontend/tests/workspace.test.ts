@@ -86,7 +86,10 @@ beforeEach(() => {
       else if (path === "/api/templates" && init.method === "POST")
         data = { template: template() };
       else if (path === "/api/templates") data = { templates: [template()] };
-      else if (path === "/api/templates/letter")
+      else if (
+        path === "/api/templates/letter" ||
+        (path === "/api/templates/letter/view" && init.method === "POST")
+      )
         data = { template: template() };
       else if (path.endsWith("/files") && init.method === "GET")
         data = {
@@ -386,11 +389,11 @@ it("ignores a delayed response for a previously selected template", async () => 
   vi.stubGlobal(
     "fetch",
     vi.fn((path: string, init?: RequestInit) => {
-      if (path === "/api/templates/old")
+      if (path === "/api/templates/old/view")
         return new Promise<Response>((resolve) => {
           resolveOld = resolve;
         });
-      if (path === "/api/templates/newer")
+      if (path === "/api/templates/newer/view")
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -805,6 +808,13 @@ it("passes current shape variables only to the root Jinja editor and updates the
   await click("Files");
   await click("template.tex");
   expect(wrapper.findComponent(CodeEditArea).props("variables")).toEqual([]);
+});
+
+it("records opening the template editor", async () => {
+  await open();
+  expect(mutation("POST", "/letter/view")?.init.headers).toMatchObject({
+    "X-CSRF-Token": "csrf",
+  });
 });
 
 it("saves and reloads a list base type and clears it when returning to a scalar", async () => {
