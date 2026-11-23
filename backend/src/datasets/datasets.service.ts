@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { fieldTypes, type FieldType } from '../contracts.js';
 import type { Dataset } from '../generated/prisma/client.js';
 import type { Database } from '../users/users.repository.js';
 import { ACCOUNT_ID_PATTERN } from '../validation.js';
 import {
   DatasetError,
+  maxDatasetRankLength,
   getOwnedDataset,
   getOwnedRow,
   withDatasetLock,
-  reserveRowPositions,
+  reserveAppendedRows,
+  rebalanceDatasetRanks,
 } from './datasets.repository.js';
 
 export const datasetColumnLimit = 100;
@@ -194,18 +197,22 @@ export async function listRows(
   db: Database,
   ownedBy: string,
   datasetId: string,
-  after: number,
+  after: string | undefined,
   limit: number,
 ) {
   await getOwnedDataset(db, ownedBy, datasetId);
   const rows = await db.datasetRow.findMany({
-    where: { datasetId, dataset: { ownedBy }, position: { gt: after } },
-    orderBy: { position: 'asc' },
+    where: {
+      datasetId,
+      dataset: { ownedBy },
+      rank: after ? { gt: after } : undefined,
+    },
+    orderBy: { rank: 'asc' },
     take: limit + 1,
   });
   const hasMore = rows.length > limit;
   if (hasMore) rows.pop();
-  return { rows, nextAfter: hasMore ? rows.at(-1)!.position : null };
+  return { rows, nextAfter: hasMore ? rows.at(-1)!.rank : null };
 }
 
 export function appendRow(
@@ -216,8 +223,10 @@ export function appendRow(
 ) {
   return withDatasetLock(db, ownedBy, datasetId, async (tx, dataset) => {
     const values = validateDatasetValues(datasetColumns(dataset), input);
-    const position = await reserveRowPositions(tx, datasetId, 1);
-    return tx.datasetRow.create({ data: { datasetId, position, values } });
+    const { firstPosition, ranks } = await reserveAppendedRows(tx, dataset, 1);
+    return tx.datasetRow.create({
+      data: { datasetId, position: firstPosition, rank: ranks[0], values },
+    });
   });
 }
 
@@ -240,6 +249,76 @@ export function updateRow(
   });
 }
 
+export type RowMove =
+  | { beforeRowId: string }
+  | { afterRowId: string }
+  | { direction: 'up' | 'down' };
+
+export function moveRow(
+  db: Database,
+  ownedBy: string,
+  datasetId: string,
+  id: string,
+  move: RowMove,
+) {
+  return withDatasetLock(db, ownedBy, datasetId, async (tx) => {
+    const row = await getOwnedRow(tx, ownedBy, datasetId, id);
+
+    function neighbor(rank: string, before: boolean) {
+      return tx.datasetRow.findFirst({
+        where: {
+          datasetId,
+          id: { not: id },
+          rank: before ? { lt: rank } : { gt: rank },
+        },
+        orderBy: { rank: before ? 'desc' : 'asc' },
+        select: { id: true, rank: true },
+      });
+    }
+
+    const before =
+      'direction' in move ? move.direction === 'up' : 'beforeRowId' in move;
+    const anchor =
+      'direction' in move
+        ? await neighbor(row.rank, before)
+        : await getOwnedRow(
+            tx,
+            ownedBy,
+            datasetId,
+            'beforeRowId' in move ? move.beforeRowId : move.afterRowId,
+          );
+    if (!anchor) return { row };
+    if (anchor.rank === row.rank)
+      throw new DatasetError('Cannot move a row relative to itself');
+
+    const outside = await neighbor(anchor.rank, before);
+    const lower = before ? outside?.rank : anchor.rank;
+    const upper = before ? anchor.rank : outside?.rank;
+    if ((!lower || lower < row.rank) && (!upper || row.rank < upper))
+      return { row };
+
+    const rank = generateJitteredKeyBetween(lower ?? null, upper ?? null);
+    const rebalanced = rank.length > maxDatasetRankLength;
+    const moved = rebalanced
+      ? {
+          ...row,
+          rank: await rebalanceDatasetRanks(
+            db,
+            tx,
+            datasetId,
+            id,
+            before ? anchor.id : outside?.id,
+          ),
+        }
+      : await tx.datasetRow.update({ where: { id }, data: { rank } });
+    await tx.dataset.update({
+      where: { id: datasetId },
+      data: { updatedAt: new Date() },
+    });
+    return rebalanced ? { row: moved, rebalanced: true } : { row: moved };
+  });
+}
+
 export function deleteRow(
   db: Database,
   ownedBy: string,
@@ -251,7 +330,7 @@ export function deleteRow(
     const row = await tx.datasetRow.delete({ where: { id } });
     await tx.dataset.update({
       where: { id: datasetId },
-      data: { updatedAt: new Date() },
+      data: { rowCount: { decrement: 1 } },
     });
     return row;
   });

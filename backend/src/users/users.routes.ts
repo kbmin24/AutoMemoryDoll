@@ -21,9 +21,28 @@ import {
   validateRequest,
 } from '../validation.js';
 
-export function adminRoutes(db: Database, config: AuthConfig) {
+import {
+  apiSystemInformation,
+  type DockerStatus,
+} from '../system/system-information.js';
+
+export function adminRoutes(
+  db: Database,
+  config: AuthConfig,
+  readDockerStatus?: () => Promise<DockerStatus | null>,
+) {
   const router = Router();
   router.use(requireUser(db, config), requireAdmin());
+  router.get('/system-information', async (_request, response) => {
+    const [system, docker] = await Promise.all([
+      apiSystemInformation(),
+      readDockerStatus?.().catch(() => null),
+    ]);
+    response.set('Cache-Control', 'private, no-store').json({
+      system,
+      docker: docker ?? null,
+    });
+  });
   router.use('/ai/quotas', aiQuotaRoutes(db, config));
   router.get(
     '/ai/usage',

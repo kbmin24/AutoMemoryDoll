@@ -7,6 +7,7 @@ import { createPrismaClient } from '../db/prisma.js';
 import { queueName } from '../jobs/queue.js';
 import { FileSystemStorage } from '../storage/filesystem-storage.js';
 import { validateId } from '../storage/paths.js';
+import { publishDockerStatus } from './docker-status.js';
 import { loadWorkerConfig } from './config.js';
 import { ContainerPdfGenerator } from './container-runner.js';
 import { JobProcessor, reconcileFailedDeliveries } from './jobs.worker.js';
@@ -79,6 +80,18 @@ await runService('consumer', async (logger) => {
       ...safeError(error),
     }),
   );
+  let dockerSample: Promise<void> | undefined;
+  function sampleDocker() {
+    dockerSample ??= publishDockerStatus(connection, config)
+      .catch((error) => {
+        logger.error('docker.status_failed', safeError(error));
+      })
+      .finally(() => {
+        dockerSample = undefined;
+      });
+  }
+  sampleDocker();
+  const dockerTimer = setInterval(sampleDocker, 5_000);
   logger.info('service.ready');
   const timer = setInterval(() => {
     void reconcile();
@@ -89,6 +102,7 @@ await runService('consumer', async (logger) => {
     stopping = true;
     logger.info('service.stopping');
     clearInterval(timer);
+    clearInterval(dockerTimer);
     try {
       await worker.close();
       await reconciliation;

@@ -15,7 +15,12 @@ column is `display_id`. The username remains the sign-in ID.
 ## Admin navigation
 
 Admins and owners open the Admin landing page from the main navigation.
-The page has tiles for Users and AI.
+The page has tiles for Users, AI, and System Information. System Information
+reports the API container runtime. Uptime and memory use describe the API
+process, and the memory limit is reported when available. The Docker section
+shows the currently running compiler containers, including preview containers,
+and the worker's configured per-container limits. The worker shares a
+short-lived Redis snapshot using its existing Docker access.
 
 ## Post-MVP AI-assisted template authoring
 
@@ -309,7 +314,15 @@ On 2026-11-22, the owner selected one PostgreSQL `jsonb` object per dataset row.
 
 The owner approved private, owner-scoped datasets with cascading row deletion. Columns use the scalar template types `text`, `longtext`, `number`, and `boolean`. Each column can be required or optional and has a stable ID used as its key in each row. The schema can change while a dataset is empty. Once it has rows, column edits are limited to renames.
 
-The manual management API lives at `/api/datasets`, with row management under `/:id/rows`. Row updates replace the values object. Omit optional values and supply all required values. Rows are listed by increasing position, with a default page size of 50 and a maximum of 100. Pass `nextAfter` as `after` to continue. Appends use increasing positions and deletion leaves gaps.
+The manual management API lives at `/api/datasets`, with row management under `/:id/rows`. Row updates replace the values object. Omit optional values and supply all required values. Rows are listed by fractional rank, with a default page size of 50 and a maximum of 100. Pass the opaque string `nextAfter` as `after` to continue. Numeric positions remain stable record numbers. Appends assign increasing record numbers and deletion leaves gaps.
+
+The dataset table’s `#` column shows the current row order, numbered from 1 across pages. Dataset rows can be dragged within the visible page. The move API is `PATCH /api/datasets/:id/rows/:rowId/order` and accepts exactly one of `beforeRowId`, `afterRowId`, or `direction` (`up` or `down`).
+
+Editing an existing row replaces its displayed values with inputs in the table. Add new entry opens a blank editable row at the bottom of the current page. Save applies the edits and Cancel discards them.
+
+The dataset screen opens on the Rows tab. Import CSV and Database Settings have their own tabs. The Delete dataset action is in Database Settings and requires confirmation.
+
+The server uses `fractional-indexing-jittered` to generate ranks under the existing dataset lock. Order reads use a unique dataset-and-rank index with bytewise collation. A normal move changes one row rank and the dataset modification timestamp. If its generated rank would exceed 128 characters, the server assigns compact ranks to all rows in their new order within the same transaction. The response includes `rebalanced: true` and the frontend reloads from the first page. The dataset stores its row count under the same lock so appends and deletions avoid a count scan. Manual row operations use a constant number of indexed reads and writes. A rebalance rewrites the rows of the affected dataset only. CSV import writes one row per input record. The migration preserves the existing order, record numbers, and values.
 
 CSV imports use `POST /api/datasets/:id/import` with a multipart `file` field. Imports accept UTF-8 CSV up to 5 MiB, 1,000 data rows, and 100 columns per file. Headers must match the current dataset column labels exactly, in any order and without duplicates. A valid import appends every row atomically in file order and returns the imported row count. Errors identify the first invalid record and column when applicable without including cell contents.
 

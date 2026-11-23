@@ -24,10 +24,14 @@ import {
   deleteDataset,
   deleteRow,
   listRows,
+  moveRow,
   updateDataset,
   updateRow,
   validDatasetName,
 } from './datasets.service.js';
+
+// Allow pagination through ranks stored before the 128-character cap.
+const maxDatasetCursorLength = 1024;
 
 function ownerId(request: AuthRequest) {
   return request.currentUser!.id;
@@ -157,19 +161,23 @@ export function datasetsRoutes(
     id,
     query('after')
       .optional()
-      .custom(pageInteger)
-      .isInt({ min: 0, max: 2147483647 }),
+      .custom(
+        (value) =>
+          typeof value === 'string' &&
+          value.length <= maxDatasetCursorLength &&
+          /^[a-zA-Z][0-9a-zA-Z]+$/.test(value),
+      ),
     query('limit').optional().custom(pageInteger).isInt({ min: 1, max: 100 }),
     checkExact(),
     validateRequest,
     async (request, response) => {
-      const { after = '0', limit = '50' } = request.query;
+      const { after, limit = '50' } = request.query;
       response.json(
         await listRows(
           db,
           ownerId(request),
           String(request.params.id),
-          Number(after),
+          typeof after === 'string' ? after : undefined,
           Number(limit),
         ),
       );
@@ -228,6 +236,31 @@ export function datasetsRoutes(
         request.body.values,
       );
       response.json({ row });
+    },
+  );
+
+  router.patch(
+    '/:id/rows/:rowId/order',
+    csrf,
+    id,
+    rowId,
+    body('beforeRowId').optional().isString().matches(ACCOUNT_ID_PATTERN),
+    body('afterRowId').optional().isString().matches(ACCOUNT_ID_PATTERN),
+    body('direction').optional().isString().isIn(['up', 'down']),
+    checkExact(),
+    validateRequest,
+    async (request, response) => {
+      if (Object.keys(request.body ?? {}).length !== 1) {
+        throw new DatasetError('Supply exactly one row move target');
+      }
+      const result = await moveRow(
+        db,
+        ownerId(request),
+        String(request.params.id),
+        String(request.params.rowId),
+        request.body,
+      );
+      response.json(result);
     },
   );
 

@@ -23,6 +23,8 @@ import type { QueuePublisher } from './jobs/jobs.service.js';
 import { datasetsRoutes } from './datasets/datasets.routes.js';
 import { DatasetError } from './datasets/datasets.repository.js';
 
+import type { DockerStatus } from './system/system-information.js';
+
 export function createApp(
   db: PrismaClient,
   config: AuthConfig,
@@ -32,6 +34,7 @@ export function createApp(
   trustedProxies: string[] = [],
   previews?: PreviewScheduler,
   ai?: AiDraftService,
+  readDockerStatus?: () => Promise<DockerStatus | null>,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -39,7 +42,7 @@ export function createApp(
   app.use(requestLogging(logger));
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/auth', authRoutes(db, config, ai));
-  app.use('/api/admin', adminRoutes(db, config));
+  app.use('/api/admin', adminRoutes(db, config, readDockerStatus));
   app.use('/api/owner', ownerRoutes(db, config));
   app.use('/api/datasets', datasetsRoutes(db, config, storage));
   app.use(

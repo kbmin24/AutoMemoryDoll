@@ -98,13 +98,13 @@ async function selectRows(
     `"${databaseSchema(db).replaceAll('"', '""')}"."dataset_rows"`,
   );
   const order = {
-    all: Prisma.sql`position ASC`,
-    first: Prisma.sql`position ASC`,
-    last: Prisma.sql`position DESC`,
+    all: Prisma.sql`rank ASC`,
+    first: Prisma.sql`rank ASC`,
+    last: Prisma.sql`rank DESC`,
     random: Prisma.sql`random()`,
   }[mode];
-  const rows = await tx.$queryRaw<Pick<DatasetRow, 'position' | 'values'>[]>(
-    Prisma.sql`SELECT position, (
+  const rows = await tx.$queryRaw<Pick<DatasetRow, 'rank' | 'values'>[]>(
+    Prisma.sql`SELECT rank, (
       SELECT COALESCE(jsonb_object_agg(key, value), '{}'::jsonb)
       FROM jsonb_each("values")
       WHERE key IN (${Prisma.join(columnIds)})
@@ -114,7 +114,9 @@ async function selectRows(
     ORDER BY ${order}
     ${mode === 'all' ? Prisma.empty : Prisma.sql`LIMIT ${count}`}`,
   );
-  return rows.sort((left, right) => left.position - right.position);
+  return rows.sort((left, right) =>
+    left.rank < right.rank ? -1 : Number(left.rank > right.rank),
+  );
 }
 
 export async function resolveDatasetBindings(

@@ -31,6 +31,7 @@ model Dataset {
   name         String
   columns      Json         @db.JsonB
   lastPosition Int          @default(0) @map("last_position")
+  rowCount     Int          @default(0) @map("row_count")
   createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   rows         DatasetRow[]
@@ -44,9 +45,11 @@ model DatasetRow {
   datasetId String  @map("dataset_id") @db.Uuid
   dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
   position  Int
+  rank      String
   values    Json    @db.JsonB
 
   @@unique([datasetId, position])
+  @@unique([datasetId, rank])
   @@map("dataset_rows")
 }
 

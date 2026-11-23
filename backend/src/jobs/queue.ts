@@ -3,6 +3,11 @@ import { validateId } from '../storage/paths.js';
 import { silentLogger, safeError, type Logger } from '../logging/logger.js';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
+import {
+  dockerSnapshotKey,
+  dockerSnapshotTtlSeconds,
+  type DockerStatus,
+} from '../system/system-information.js';
 import type { QueuePublisher } from './jobs.service.js';
 
 export const queueName = 'pdf-generation';
@@ -66,6 +71,17 @@ export function createJobQueue(
   queue.on('error', (error) => logger.error('queue.error', safeError(error)));
   return {
     publisher: new BullMqPublisher(queue),
+    async readDockerStatus(): Promise<DockerStatus | null> {
+      const raw = await connection.get(dockerSnapshotKey);
+      if (!raw) return null;
+      const { sampledAt, status } = JSON.parse(raw) as {
+        sampledAt: number;
+        status: DockerStatus;
+      };
+      return Date.now() - sampledAt < dockerSnapshotTtlSeconds * 1000
+        ? status
+        : null;
+    },
     async close() {
       await queue.close();
       connection.disconnect();

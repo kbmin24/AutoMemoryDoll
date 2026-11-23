@@ -314,6 +314,141 @@ describe.skipIf(!databaseUrl)('dataset management with PostgreSQL', () => {
       .expect(201);
     expect(appended.body.row.position).toBe(4);
   });
+  it('moves one owned row and paginates the new order', async () => {
+    const dataset = await createDataset();
+    const [name, , score, present] = dataset.columns;
+    const path = `/api/datasets/${dataset.id}/rows`;
+    const add = async (value: number) =>
+      (
+        await request(app)
+          .post(path)
+          .set(owner)
+          .send({
+            values: { [name.id]: 'Ada', [score.id]: value, [present.id]: true },
+          })
+          .expect(201)
+      ).body.row;
+    const first = await add(1);
+    const second = await add(2);
+    const third = await add(3);
+    const order = `${path}/${third.id}/order`;
+
+    await request(app)
+      .patch(order)
+      .set(other)
+      .send({ beforeRowId: first.id })
+      .expect(404);
+    await request(app)
+      .patch(order)
+      .set(owner)
+      .send({ beforeRowId: third.id })
+      .expect(400);
+    const moved = await request(app)
+      .patch(order)
+      .set(owner)
+      .send({ beforeRowId: first.id })
+      .expect(200);
+    expect(moved.body.row).toMatchObject({
+      id: third.id,
+      position: 3,
+      values: third.values,
+    });
+    const head = (
+      await request(app).get(path).set(owner).query({ limit: 1 }).expect(200)
+    ).body;
+    expect(head.rows.map((row: { id: string }) => row.id)).toEqual([third.id]);
+    expect(typeof head.nextAfter).toBe('string');
+    const tail = (
+      await request(app)
+        .get(path)
+        .set(owner)
+        .query({ after: head.nextAfter })
+        .expect(200)
+    ).body;
+    expect(tail.rows.map((row: { id: string }) => row.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    expect(tail.rows.map((row: { rank: string }) => row.rank)).toEqual([
+      first.rank,
+      second.rank,
+    ]);
+
+    const top = await request(app)
+      .patch(order)
+      .set(owner)
+      .send({ direction: 'up' })
+      .expect(200);
+    expect(top.body.row.rank).toBe(moved.body.row.rank);
+    await request(app)
+      .patch(order)
+      .set(owner)
+      .send({ direction: 'down' })
+      .expect(200);
+    const after = (await request(app).get(path).set(owner).expect(200)).body;
+    expect(after.rows.map((row: { id: string }) => row.id)).toEqual([
+      first.id,
+      third.id,
+      second.id,
+    ]);
+  });
+
+  it('rebalances dense ranks and completes the requested move', async () => {
+    const dataset = await createDataset();
+    const [name, , score, present] = dataset.columns;
+    const path = `/api/datasets/${dataset.id}/rows`;
+    const rows = [];
+    for (const number of [1, 2, 3, 4]) {
+      const result = await request(app)
+        .post(path)
+        .set(owner)
+        .send({
+          values: { [name.id]: 'Ada', [score.id]: number, [present.id]: true },
+        })
+        .expect(201);
+      rows.push(result.body.row);
+    }
+    const prefix = 'a0' + '0'.repeat(125);
+    await db.datasetRow.update({
+      where: { id: rows[0].id },
+      data: { rank: prefix + '1' },
+    });
+    await db.datasetRow.update({
+      where: { id: rows[1].id },
+      data: { rank: prefix + '2' },
+    });
+    await db.datasetRow.update({
+      where: { id: rows[2].id },
+      data: { rank: 'a2' },
+    });
+    const original = await db.datasetRow.findMany({
+      where: { datasetId: dataset.id },
+      orderBy: { rank: 'asc' },
+    });
+
+    const result = await request(app)
+      .patch(`${path}/${rows[3].id}/order`)
+      .set(owner)
+      .send({ beforeRowId: rows[1].id })
+      .expect(200);
+    expect(result.body.rebalanced).toBe(true);
+
+    const { body } = await request(app).get(path).set(owner).expect(200);
+    expect(
+      body.rows.map(
+        ({ rank: _rank, ...row }: (typeof original)[number]) => row,
+      ),
+    ).toEqual(
+      [original[0], original[3], original[1], original[2]].map(
+        ({ rank: _rank, ...row }) => row,
+      ),
+    );
+    expect(
+      body.rows.every((row: { rank: string }) => row.rank.length < 10),
+    ).toBe(true);
+    expect(result.body.row).toEqual(body.rows[1]);
+  });
+
   it('resolves owned rows in JSON and multipart submissions and snapshots the selection', async () => {
     const dataset = await createDataset();
     const [name, , score, present] = dataset.columns;
@@ -339,6 +474,11 @@ describe.skipIf(!databaseUrl)('dataset management with PostgreSQL', () => {
       .delete(`${rowsPath}/${rows[1].id}`)
       .set(owner)
       .expect(204);
+    await request(app)
+      .patch(`${rowsPath}/${rows[3].id}/order`)
+      .set(owner)
+      .send({ beforeRowId: rows[0].id })
+      .expect(200);
 
     const manifest = {
       version: 1,
@@ -440,25 +580,25 @@ describe.skipIf(!databaseUrl)('dataset management with PostgreSQL', () => {
       .send({ values: dataFor(9) })
       .expect(200);
     expect(await snapshot(first.body.job.id)).toEqual([
+      { name: 'Row 4', score: 4 },
       { name: 'Row 1', score: 1 },
-      { name: 'Row 3', score: 3 },
     ]);
     expect(await snapshot(last.body.job.id)).toEqual([
-      { name: 'Row 3', score: 3 },
-      { name: 'Row 4', score: 4 },
-    ]);
-    expect(await snapshot(all.body.job.id)).toEqual([
       { name: 'Row 1', score: 1 },
       { name: 'Row 3', score: 3 },
+    ]);
+    expect(await snapshot(all.body.job.id)).toEqual([
       { name: 'Row 4', score: 4 },
+      { name: 'Row 1', score: 1 },
+      { name: 'Row 3', score: 3 },
     ]);
     const selected = (await snapshot(random.body.job.id)).map(
       (row: { score: number }) => row.score,
     );
     expect([
       [1, 3],
-      [1, 4],
-      [3, 4],
+      [4, 1],
+      [4, 3],
     ]).toContainEqual(selected);
     expect(queued.slice(queuedBefore)).toEqual([
       first.body.job.id,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ParentLink from '../components/ParentLink.vue';
-import { nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api/client';
 import type { Dataset, DatasetColumn, DatasetRow } from '../api/types';
@@ -24,22 +24,56 @@ function blankColumn(): DraftColumn {
 const dataset = ref<Dataset>();
 const name = ref('');
 const columns = ref<DraftColumn[]>([blankColumn()]);
-const showSchema = ref(!id);
+const tabs = [
+  { id: 'rows', label: 'Rows' },
+  { id: 'import', label: 'Import CSV' },
+  { id: 'settings', label: 'Database Settings' },
+] as const;
+type DatasetTab = (typeof tabs)[number]['id'];
+const activeTab = ref<DatasetTab>('rows');
 const loading = ref(Boolean(id));
 const busy = ref(false);
+const movingRow = ref(false);
 const error = ref('');
 const status = ref('');
 const rows = ref<DatasetRow[]>([]);
 const hasRows = ref(false);
-const cursors = ref<number[]>([0]);
-const nextAfter = ref<number | null>(null);
+const cursors = ref([{ after: '', offset: 0 }]);
+const pageOffset = computed(() => cursors.value.at(-1)!.offset);
+const nextAfter = ref<string | null>(null);
+const draggedIndex = ref<number | null>(null);
+const dropIndex = ref<number | null>(null);
 const editing = ref<DatasetRow | 'new' | null>(null);
-const rowForm = ref<HTMLFormElement>();
+const tableRows = computed(() =>
+  editing.value === 'new' ? [...rows.value, 'new' as const] : rows.value,
+);
+const inlineRowForm = ref<HTMLFormElement>();
 const cells = ref<Record<string, string>>({});
 const pendingDelete = ref<DatasetRow | 'dataset' | null>(null);
 const csv = ref<File | null>(null);
 const fileInput = ref<HTMLInputElement>();
 const columnLimit = 100;
+
+function selectTab(tab: DatasetTab) {
+  if (activeTab.value === tab) return;
+  activeTab.value = tab;
+  pendingDelete.value = null;
+}
+
+function navigateTabs(event: KeyboardEvent) {
+  const index = tabs.findIndex(({ id }) => id === activeTab.value);
+  const targets: Record<string, number> = {
+    ArrowLeft: (index + tabs.length - 1) % tabs.length,
+    ArrowRight: (index + 1) % tabs.length,
+    Home: 0,
+    End: tabs.length - 1,
+  };
+  const tab = tabs[targets[event.key]];
+  if (!tab) return;
+  event.preventDefault();
+  selectTab(tab.id);
+  document.getElementById(`dataset-tab-${tab.id}`)?.focus();
+}
 
 function resetSchema() {
   name.value = dataset.value?.name ?? '';
@@ -48,11 +82,12 @@ function resetSchema() {
   ];
 }
 
-async function page(after = 0) {
-  const query = after ? `?after=${after}` : '';
-  const result = await api<{ rows: DatasetRow[]; nextAfter: number | null }>(
+async function page(after = '') {
+  const query = after ? `?after=${encodeURIComponent(after)}` : '';
+  const result = await api<{ rows: DatasetRow[]; nextAfter: string | null }>(
     `${base}/rows${query}`,
   );
+  clearDrag();
   rows.value = result.rows;
   nextAfter.value = result.nextAfter;
   if (!after) hasRows.value = rows.value.length > 0;
@@ -102,7 +137,6 @@ function saveSchema() {
     }
     dataset.value = saved;
     resetSchema();
-    showSchema.value = false;
     status.value = 'Dataset settings saved.';
   });
 }
@@ -116,12 +150,14 @@ async function editRow(row: DatasetRow | 'new') {
   );
   editing.value = row;
   await nextTick();
-  rowForm.value?.querySelector<HTMLElement>('input, textarea, select')?.focus();
+  inlineRowForm.value
+    ?.querySelector<HTMLElement>('input, textarea, select')
+    ?.focus();
 }
 
 async function firstPage() {
   await page();
-  cursors.value = [0];
+  cursors.value = [{ after: '', offset: 0 }];
 }
 
 function saveRow() {
@@ -153,17 +189,94 @@ function saveRow() {
     editing.value = null;
     status.value = row === 'new' ? 'Row added.' : 'Row saved.';
     if (row === 'new') await firstPage();
-    else await page(cursors.value.at(-1));
+    else await page(cursors.value.at(-1)?.after);
   });
 }
 
 function changePage(forward: boolean) {
   return perform(async () => {
-    const cursor = forward ? nextAfter.value : cursors.value.at(-2);
-    if (cursor == null) return;
-    await page(cursor);
-    if (forward) cursors.value.push(cursor);
-    else cursors.value.pop();
+    if (forward) {
+      const after = nextAfter.value;
+      if (after === null) return;
+      const offset = pageOffset.value + rows.value.length;
+      await page(after);
+      cursors.value.push({ after, offset });
+    } else {
+      const previous = cursors.value.at(-2);
+      if (!previous) return;
+      await page(previous.after);
+      cursors.value.pop();
+    }
+  });
+}
+
+function clearDrag() {
+  draggedIndex.value = null;
+  dropIndex.value = null;
+}
+
+function startDrag(event: DragEvent, index: number) {
+  if (busy.value) {
+    event.preventDefault();
+    return;
+  }
+  draggedIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(
+      'text/plain',
+      String(rows.value[index].position),
+    );
+    const handle = event.currentTarget as HTMLElement;
+    const row = handle.closest('tr');
+    if (row) {
+      const { left, top } = row.getBoundingClientRect();
+      event.dataTransfer.setDragImage(
+        row,
+        event.clientX - left,
+        event.clientY - top,
+      );
+    }
+  }
+}
+
+function allowDrop(event: DragEvent, index: number) {
+  if (busy.value || draggedIndex.value === null || draggedIndex.value === index)
+    return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  dropIndex.value = index;
+}
+
+function dropRow(index: number) {
+  const source = draggedIndex.value;
+  clearDrag();
+  if (busy.value || source === null || source === index) return;
+  const target = rows.value[index].id;
+  void moveRow(
+    rows.value[source],
+    source > index ? { beforeRowId: target } : { afterRowId: target },
+  );
+}
+
+function moveRow(
+  row: DatasetRow,
+  move: { beforeRowId: string } | { afterRowId: string },
+) {
+  return perform(async () => {
+    movingRow.value = true;
+    try {
+      const result = await api<{ rebalanced?: boolean }>(
+        `${base}/rows/${encodeURIComponent(row.id)}/order`,
+        'PATCH',
+        move,
+      );
+      // Rebalancing can invalidate saved cursors.
+      if (result.rebalanced) await firstPage();
+      else await page(cursors.value.at(-1)?.after);
+    } finally {
+      movingRow.value = false;
+    }
   });
 }
 
@@ -196,7 +309,9 @@ function remove() {
     if (target === 'dataset') {
       await router.replace('/datasets');
     } else {
-      if (editing.value === target) editing.value = null;
+      if (editing.value !== 'new' && editing.value?.id === target.id) {
+        editing.value = null;
+      }
       status.value = 'Row deleted.';
       await firstPage();
     }
@@ -206,33 +321,31 @@ function remove() {
 
 <template>
   <ParentLink to="/datasets" label="Datasets" />
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <h1 class="min-w-0 [overflow-wrap:anywhere]">
-      {{ id ? (dataset?.name ?? 'Dataset') : 'New dataset' }}
-    </h1>
-    <div v-if="dataset" class="flex flex-wrap gap-2">
-      <button
-        class="btn btn-outline"
-        type="button"
-        :disabled="busy"
-        :aria-expanded="showSchema"
-        aria-controls="dataset-schema"
-        @click="
-          resetSchema();
-          showSchema = !showSchema;
-        "
-      >
-        {{ showSchema ? 'Close settings' : 'Dataset settings' }}
-      </button>
-      <button
-        class="btn btn-ghost"
-        type="button"
-        :disabled="busy"
-        @click="pendingDelete = 'dataset'"
-      >
-        Delete dataset
-      </button>
-    </div>
+  <h1 class="min-w-0 [overflow-wrap:anywhere]">
+    {{ id ? (dataset?.name ?? 'Dataset') : 'New dataset' }}
+  </h1>
+  <div
+    v-if="dataset"
+    class="tabs tabs-border mt-4 flex-nowrap overflow-x-auto"
+    role="tablist"
+    aria-label="Dataset"
+    @keydown="navigateTabs"
+  >
+    <button
+      v-for="tab in tabs"
+      :id="`dataset-tab-${tab.id}`"
+      :key="tab.id"
+      type="button"
+      role="tab"
+      class="tab shrink-0 whitespace-nowrap"
+      :class="{ 'tab-active': activeTab === tab.id }"
+      :aria-controls="`dataset-panel-${tab.id}`"
+      :aria-selected="activeTab === tab.id"
+      :tabindex="activeTab === tab.id ? 0 : -1"
+      @click="selectTab(tab.id)"
+    >
+      {{ tab.label }}
+    </button>
   </div>
   <p v-if="loading" role="status">Loading dataset…</p>
   <p v-if="error" role="alert" class="mt-3 text-error">
@@ -280,223 +393,293 @@ function remove() {
     </div>
   </section>
 
-  <form
-    v-if="showSchema"
-    id="dataset-schema"
-    class="my-5 max-w-4xl rounded-box border border-outline p-4 workspace:p-6"
-    @submit.prevent="saveSchema"
+  <section
+    v-if="dataset || !id"
+    v-show="!id || activeTab === 'settings'"
+    id="dataset-panel-settings"
+    :role="id ? 'tabpanel' : undefined"
+    :aria-labelledby="id ? 'dataset-tab-settings' : undefined"
   >
-    <fieldset :disabled="busy" class="grid gap-4">
-      <label class="grid max-w-md gap-1" for="dataset-name">
-        Dataset name
-        <input
-          id="dataset-name"
-          v-model="name"
-          class="input w-full"
-          maxlength="200"
-          required
-        />
-      </label>
-      <h2>Columns</h2>
-      <p v-if="hasRows" class="text-sm text-muted">
-        You can rename columns while the dataset contains rows.
-      </p>
-      <fieldset
-        v-for="(column, index) in columns"
-        :key="column.id ?? index"
-        class="grid min-w-0 gap-3 border-t border-outline pt-3 workspace:grid-cols-[minmax(0,1fr)_minmax(8rem,0.5fr)_auto_auto] workspace:items-end"
-      >
-        <legend class="text-sm font-semibold">Column {{ index + 1 }}</legend>
-        <label class="grid gap-1" :for="`column-label-${index}`">
-          Name
+    <form
+      id="dataset-schema"
+      class="my-5 max-w-4xl rounded-box border border-outline p-4 workspace:p-6"
+      @submit.prevent="saveSchema"
+    >
+      <fieldset :disabled="busy" class="grid gap-4">
+        <label class="grid max-w-md gap-1" for="dataset-name">
+          Dataset name
           <input
-            :id="`column-label-${index}`"
-            v-model="column.label"
+            id="dataset-name"
+            v-model="name"
             class="input w-full"
             maxlength="200"
             required
           />
         </label>
-        <label class="grid gap-1" :for="`column-type-${index}`">
-          Type
-          <select
-            :id="`column-type-${index}`"
-            v-model="column.type"
-            class="select w-full"
-            :disabled="hasRows"
-          >
-            <option v-for="(label, value) in types" :key="value" :value="value">
-              {{ label }}
-            </option>
-          </select>
-        </label>
-        <label class="flex min-h-10 items-center gap-2">
-          <input
-            v-model="column.optional"
-            type="checkbox"
-            class="checkbox"
-            :disabled="hasRows"
-          />
-          Optional
-        </label>
-        <button
-          v-if="!hasRows"
-          class="btn btn-ghost"
-          type="button"
-          :disabled="columns.length === 1"
-          :aria-label="`Remove column ${index + 1}`"
-          @click="columns.splice(index, 1)"
+        <h2>Columns</h2>
+        <p v-if="hasRows" class="text-sm text-muted">
+          You can rename columns while the dataset contains rows.
+        </p>
+        <fieldset
+          v-for="(column, index) in columns"
+          :key="column.id ?? index"
+          class="grid min-w-0 gap-3 border-t border-outline pt-3 workspace:grid-cols-[minmax(0,1fr)_minmax(8rem,0.5fr)_auto_auto] workspace:items-end"
         >
-          Remove
-        </button>
-      </fieldset>
-      <div class="flex flex-wrap gap-2 border-t border-outline pt-4">
-        <button
-          v-if="!hasRows"
-          class="btn btn-outline"
-          type="button"
-          :disabled="columns.length >= columnLimit"
-          @click="columns.push(blankColumn())"
-        >
-          Add column
-        </button>
-        <button class="btn btn-primary">
-          {{ id ? 'Save settings' : 'Create dataset' }}
-        </button>
-      </div>
-    </fieldset>
-  </form>
-
-  <section v-if="dataset" aria-labelledby="dataset-rows-title" class="mt-6">
-    <h2 id="dataset-rows-title">Rows</h2>
-    <form
-      v-if="editing"
-      id="dataset-row"
-      ref="rowForm"
-      class="my-4 max-w-3xl rounded-box border border-outline p-4"
-      @submit.prevent="saveRow"
-    >
-      <fieldset :disabled="busy" class="grid gap-3">
-        <legend class="font-semibold">
-          {{ editing === 'new' ? 'New row' : `Edit row ${editing.position}` }}
-        </legend>
-        <div
-          v-for="column in dataset.columns"
-          :key="column.id"
-          class="grid gap-1"
-        >
-          <label :for="`dataset-cell-${column.id}`">
-            {{ column.label
-            }}<span v-if="column.optional" class="text-sm text-muted">
-              (optional)</span
-            >
+          <legend class="text-sm font-semibold">Column {{ index + 1 }}</legend>
+          <label class="grid gap-1" :for="`column-label-${index}`">
+            Name
+            <input
+              :id="`column-label-${index}`"
+              v-model="column.label"
+              class="input w-full"
+              maxlength="200"
+              required
+            />
           </label>
-          <ScalarInput
-            :id="`dataset-cell-${column.id}`"
-            v-model="cells[column.id]"
-            :type="column.type"
-            :required="
-              !column.optional &&
-              (column.type === 'number' || column.type === 'boolean')
-            "
-          />
-        </div>
-        <div class="flex gap-2">
-          <button class="btn btn-primary">Save row</button>
-          <button class="btn" type="button" @click="editing = null">
-            Cancel
+          <label class="grid gap-1" :for="`column-type-${index}`">
+            Type
+            <select
+              :id="`column-type-${index}`"
+              v-model="column.type"
+              class="select w-full"
+              :disabled="hasRows"
+            >
+              <option
+                v-for="(label, value) in types"
+                :key="value"
+                :value="value"
+              >
+                {{ label }}
+              </option>
+            </select>
+          </label>
+          <label class="flex min-h-10 items-center gap-2">
+            <input
+              v-model="column.optional"
+              type="checkbox"
+              class="checkbox"
+              :disabled="hasRows"
+            />
+            Optional
+          </label>
+          <button
+            v-if="!hasRows"
+            class="btn btn-ghost"
+            type="button"
+            :disabled="columns.length === 1"
+            :aria-label="`Remove column ${index + 1}`"
+            @click="columns.splice(index, 1)"
+          >
+            Remove
+          </button>
+        </fieldset>
+        <div class="flex flex-wrap gap-2 border-t border-outline pt-4">
+          <button
+            v-if="!hasRows"
+            class="btn btn-outline"
+            type="button"
+            :disabled="columns.length >= columnLimit"
+            @click="columns.push(blankColumn())"
+          >
+            Add column
+          </button>
+          <button class="btn btn-primary">
+            {{ id ? 'Save settings' : 'Create dataset' }}
           </button>
         </div>
       </fieldset>
     </form>
-    <div
-      class="mt-4 max-h-[28rem] overflow-auto rounded-box border border-outline"
-      role="region"
-      aria-label="Dataset rows"
-      tabindex="0"
+    <button
+      v-if="dataset"
+      class="btn btn-error btn-outline"
+      type="button"
+      :disabled="busy"
+      @click="pendingDelete = 'dataset'"
     >
-      <table
-        class="table [&_td]:px-2 [&_th]:px-2 workspace:[&_td]:px-4 workspace:[&_th]:px-4"
+      Delete dataset
+    </button>
+  </section>
+
+  <section
+    v-if="dataset"
+    v-show="activeTab === 'rows'"
+    id="dataset-panel-rows"
+    role="tabpanel"
+    aria-labelledby="dataset-tab-rows"
+    class="mt-4"
+  >
+    <form ref="inlineRowForm" class="relative mt-4" @submit.prevent="saveRow">
+      <div
+        class="max-h-[28rem] overflow-auto rounded-box border border-outline"
+        role="region"
+        aria-label="Dataset rows"
+        :aria-busy="movingRow"
+        tabindex="0"
       >
-        <thead>
-          <tr>
-            <th scope="col" class="w-px whitespace-nowrap">Position</th>
-            <th
-              v-for="column in dataset.columns"
-              :key="column.id"
-              scope="col"
-              :class="{ 'text-right': column.type === 'number' }"
+        <table
+          class="table [&_td]:px-2 [&_th]:px-2 workspace:[&_td]:px-4 workspace:[&_th]:px-4"
+        >
+          <thead>
+            <tr>
+              <th scope="col" class="w-px whitespace-nowrap">#</th>
+              <th
+                v-for="column in dataset.columns"
+                :key="column.id"
+                scope="col"
+                :class="{ 'text-right': column.type === 'number' }"
+              >
+                {{ column.label }}
+                <span class="block text-xs font-normal text-muted">{{
+                  types[column.type]
+                }}</span>
+              </th>
+              <td aria-hidden="true" class="w-full p-0!"></td>
+              <th scope="col" class="w-px whitespace-nowrap">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(row, index) in tableRows"
+              :key="row === 'new' ? 'new' : row.id"
+              :class="{
+                'bg-base-200': dropIndex === index,
+                'opacity-50': draggedIndex === index,
+              }"
+              @dragover="row !== 'new' && allowDrop($event, index)"
+              @drop.prevent="row !== 'new' && dropRow(index)"
             >
-              {{ column.label }}
-              <span class="block text-xs font-normal text-muted">{{
-                types[column.type]
-              }}</span>
-            </th>
-            <th scope="col" class="w-px whitespace-nowrap">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in rows" :key="row.id">
-            <th scope="row" class="tabular-nums">{{ row.position }}</th>
-            <td
-              v-for="column in dataset.columns"
-              :key="column.id"
-              class="min-w-16 max-w-72 workspace:min-w-28"
-              :class="{ 'text-right tabular-nums': column.type === 'number' }"
-            >
-              <span
-                v-if="row.values[column.id] === undefined"
-                class="text-muted"
-                aria-label="Unset"
-                >—</span
+              <th scope="row" class="whitespace-nowrap tabular-nums">
+                <span v-if="row === 'new'">New</span>
+                <template v-else>
+                  <span
+                    :draggable="!busy && !editing"
+                    :title="`Drag row ${row.position}`"
+                    class="mr-2 inline-flex cursor-grab p-1 active:cursor-grabbing"
+                    aria-hidden="true"
+                    @dragstart="startDrag($event, index)"
+                    @dragend="clearDrag"
+                  >
+                    <i class="fa-solid fa-grip-vertical text-muted"></i>
+                  </span>
+                  {{ pageOffset + index + 1 }}
+                </template>
+              </th>
+              <td
+                v-for="column in dataset.columns"
+                :key="column.id"
+                class="min-w-16 max-w-72 workspace:min-w-28"
+                :class="{ 'text-right tabular-nums': column.type === 'number' }"
               >
-              <span
-                v-else
-                class="whitespace-pre-wrap [overflow-wrap:anywhere]"
-                >{{ row.values[column.id] }}</span
-              >
-            </td>
-            <td>
-              <div
-                class="flex flex-col items-start workspace:flex-row workspace:gap-1"
-              >
-                <button
-                  class="btn btn-ghost btn-sm"
-                  type="button"
+                <ScalarInput
+                  v-if="
+                    row === 'new' ||
+                    (editing !== 'new' && editing?.id === row.id)
+                  "
+                  :id="`dataset-inline-cell-${column.id}`"
+                  v-model="cells[column.id]"
+                  :aria-label="column.label"
+                  :type="column.type"
                   :disabled="busy"
-                  :aria-label="`Edit row ${row.position}`"
-                  @click="editRow(row)"
+                  :required="
+                    !column.optional &&
+                    (column.type === 'number' || column.type === 'boolean')
+                  "
+                />
+                <span
+                  v-else-if="row.values[column.id] === undefined"
+                  class="text-muted"
+                  aria-label="Unset"
+                  >—</span
                 >
-                  Edit
-                </button>
+                <span
+                  v-else
+                  class="inline-block w-max max-w-72 whitespace-pre-wrap [overflow-wrap:anywhere]"
+                  >{{ row.values[column.id] }}</span
+                >
+              </td>
+              <td aria-hidden="true" class="p-0!"></td>
+              <td>
+                <div
+                  v-if="
+                    row === 'new' ||
+                    (editing !== 'new' && editing?.id === row.id)
+                  "
+                  class="flex flex-col items-start workspace:flex-row workspace:gap-1"
+                >
+                  <button
+                    class="btn btn-primary btn-sm"
+                    type="submit"
+                    :disabled="busy"
+                  >
+                    Save
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    :disabled="busy"
+                    :aria-label="
+                      row === 'new'
+                        ? 'Cancel new row'
+                        : `Cancel editing row ${row.position}`
+                    "
+                    @click="editing = null"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <div
+                  v-else
+                  class="flex flex-col items-start workspace:flex-row workspace:gap-1"
+                >
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    :disabled="busy || !!editing"
+                    :aria-label="`Edit row ${row.position}`"
+                    @click="editRow(row)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    :disabled="busy || !!editing"
+                    :aria-label="`Delete row ${row.position}`"
+                    @click="pendingDelete = row"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="editing !== 'new'">
+              <td :colspan="dataset.columns.length + 3" class="p-0!">
                 <button
-                  class="btn btn-ghost btn-sm"
                   type="button"
-                  :disabled="busy"
-                  :aria-label="`Delete row ${row.position}`"
-                  @click="pendingDelete = row"
+                  class="btn btn-ghost w-full rounded-none"
+                  :disabled="busy || !!editing"
+                  @click="editRow('new')"
                 >
-                  Delete
+                  <i class="fa-solid fa-plus" aria-hidden="true"></i>
+                  Add new entry
                 </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td :colspan="dataset.columns.length + 2" class="p-0!">
-              <button
-                type="button"
-                class="btn btn-ghost w-full rounded-none"
-                :disabled="busy"
-                @click="editRow('new')"
-              >
-                <i class="fa-solid fa-plus" aria-hidden="true"></i>
-                Add new entry
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div
+        v-if="movingRow"
+        role="status"
+        aria-label="Moving row"
+        class="absolute inset-0 z-10 grid place-items-center rounded-box bg-base-100/65"
+      >
+        <span
+          class="loading loading-spinner loading-lg"
+          aria-hidden="true"
+        ></span>
+      </div>
+    </form>
     <nav
       v-if="cursors.length > 1 || nextAfter !== null"
       aria-label="Row pages"
@@ -505,7 +688,7 @@ function remove() {
       <button
         class="btn btn-sm"
         type="button"
-        :disabled="busy || cursors.length === 1"
+        :disabled="busy || !!editing || cursors.length === 1"
         @click="changePage(false)"
       >
         Previous
@@ -514,7 +697,7 @@ function remove() {
       <button
         class="btn btn-sm"
         type="button"
-        :disabled="busy || nextAfter === null"
+        :disabled="busy || !!editing || nextAfter === null"
         @click="changePage(true)"
       >
         Next
@@ -522,34 +705,39 @@ function remove() {
     </nav>
   </section>
 
-  <form
+  <section
     v-if="dataset"
-    id="dataset-import"
-    class="mt-6 border-t border-outline pt-5"
-    @submit.prevent="importCsv"
+    v-show="activeTab === 'import'"
+    id="dataset-panel-import"
+    role="tabpanel"
+    aria-labelledby="dataset-tab-import"
+    class="mt-5"
   >
-    <fieldset :disabled="busy">
-      <legend class="font-semibold">Import CSV</legend>
-      <p id="dataset-csv-help" class="mb-3 text-sm text-muted">
-        Use column names as headers. Up to 5 MiB and 1,000 rows.
-      </p>
-      <div class="flex flex-wrap items-end gap-2">
-        <label class="grid min-w-0 gap-1" for="dataset-csv">
-          CSV file
-          <input
-            id="dataset-csv"
-            ref="fileInput"
-            type="file"
-            accept=".csv,text/csv"
-            class="file-input max-w-full"
-            aria-describedby="dataset-csv-help"
-            @change="
-              csv = ($event.target as HTMLInputElement).files?.[0] ?? null
-            "
-          />
-        </label>
-        <button class="btn btn-outline" :disabled="!csv">Import rows</button>
-      </div>
-    </fieldset>
-  </form>
+    <form id="dataset-import" @submit.prevent="importCsv">
+      <fieldset :disabled="busy">
+        <p id="dataset-csv-help" class="mb-3 text-sm text-muted">
+          Use column names as headers. Up to 5 MiB and 1,000 rows.
+        </p>
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="grid min-w-0 gap-1" for="dataset-csv">
+            CSV file
+            <input
+              id="dataset-csv"
+              ref="fileInput"
+              type="file"
+              accept=".csv,text/csv"
+              class="file-input max-w-full"
+              aria-describedby="dataset-csv-help"
+              @change="
+                csv = ($event.target as HTMLInputElement).files?.[0] ?? null
+              "
+            />
+          </label>
+          <button class="btn btn-outline" :disabled="!csv || !!editing">
+            Import rows
+          </button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
 </template>

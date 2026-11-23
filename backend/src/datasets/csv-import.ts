@@ -5,7 +5,7 @@ import {
   DatasetError,
   datasetRowLimit,
   getOwnedDataset,
-  reserveRowPositions,
+  reserveAppendedRows,
   withDatasetLock,
 } from './datasets.repository.js';
 import {
@@ -145,11 +145,16 @@ export async function importDatasetCsv(
     }
     if (rows.length === 0) return { imported: 0 };
 
-    const first = await reserveRowPositions(tx, datasetId, rows.length);
+    const { firstPosition, ranks } = await reserveAppendedRows(
+      tx,
+      dataset,
+      rows.length,
+    );
     const { count } = await tx.datasetRow.createMany({
       data: rows.map((values, index) => ({
         datasetId,
-        position: first + index,
+        position: firstPosition + index,
+        rank: ranks[index],
         values,
       })),
     });

@@ -33,6 +33,7 @@ await runService('api', async (logger, loggingConfig) => {
     loggingConfig.trustedProxies,
     jobQueue.publisher,
     ai,
+    jobQueue.readDockerStatus,
   );
   const server = app.listen(config.port);
   await new Promise<void>((resolve, reject) => {

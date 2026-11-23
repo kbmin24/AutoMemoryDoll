@@ -6,6 +6,7 @@ import JobDetailView from './views/JobDetailView.vue';
 import LoginView from './views/LoginView.vue';
 import AccountView from './views/AccountView.vue';
 import AdminAiView from './views/AdminAiView.vue';
+import AdminSystemInformationView from './views/AdminSystemInformationView.vue';
 import AdminView from './views/AdminView.vue';
 import AdminUsersView from './views/AdminUsersView.vue';
 import TemplatesView from './views/TemplatesView.vue';
@@ -45,6 +46,11 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       },
       { path: '/account', component: AccountView },
       { path: '/admin', component: AdminView, meta: { admin: true } },
+      {
+        path: '/admin/system-information',
+        component: AdminSystemInformationView,
+        meta: { admin: true },
+      },
       { path: '/admin/ai', component: AdminAiView, meta: { admin: true } },
       {
         path: '/admin/users',

@@ -1,3 +1,7 @@
+import {
+  generateNJitteredKeysBetween,
+  generateNKeysBetween,
+} from 'fractional-indexing-jittered';
 import { databaseSchema } from '../db/prisma.js';
 import { Prisma, type Dataset } from '../generated/prisma/client.js';
 import type { Database } from '../users/users.repository.js';
@@ -63,24 +67,71 @@ export async function getOwnedRow(
   return row;
 }
 
-export async function reserveRowPositions(
+export const maxDatasetRankLength = 128;
+
+export async function reserveAppendedRows(
   tx: Prisma.TransactionClient,
-  datasetId: string,
+  dataset: Dataset,
   count: number,
 ) {
-  // Callers hold the dataset lock through the count, reservation, and insert.
-  const currentCount = await tx.datasetRow.count({ where: { datasetId } });
-  if (currentCount + count > datasetRowLimit) {
+  // The dataset lock serializes capacity checks, rank allocation, and writes.
+  if (dataset.rowCount + count > datasetRowLimit) {
     throw new DatasetError(
       `A dataset can contain at most ${datasetRowLimit} rows`,
       409,
     );
   }
 
-  const { lastPosition } = await tx.dataset.update({
-    where: { id: datasetId },
-    data: { lastPosition: { increment: count } },
-    select: { lastPosition: true },
+  const last = await tx.datasetRow.findFirst({
+    where: { datasetId: dataset.id },
+    orderBy: { rank: 'desc' },
+    select: { rank: true },
   });
-  return lastPosition - count + 1;
+  const ranks = generateNJitteredKeysBetween(last?.rank ?? null, null, count);
+  await tx.dataset.update({
+    where: { id: dataset.id },
+    data: {
+      lastPosition: { increment: count },
+      rowCount: { increment: count },
+    },
+  });
+  return { firstPosition: dataset.lastPosition + 1, ranks };
+}
+
+export async function rebalanceDatasetRanks(
+  db: Database,
+  tx: Prisma.TransactionClient,
+  datasetId: string,
+  movedId: string,
+  beforeId: string | undefined,
+) {
+  const rows = await tx.datasetRow.findMany({
+    where: { datasetId, id: { not: movedId } },
+    orderBy: { rank: 'asc' },
+    select: { id: true },
+  });
+  const index = beforeId
+    ? rows.findIndex(({ id }) => id === beforeId)
+    : rows.length;
+  rows.splice(index, 0, { id: movedId });
+  const ranks = generateNKeysBetween(null, null, rows.length);
+  const replacements = rows.map(({ id }, offset) => ({
+    id,
+    rank: ranks[offset],
+  }));
+  const table = Prisma.raw(
+    `"${databaseSchema(db).replaceAll('"', '""')}"."dataset_rows"`,
+  );
+
+  // Move existing keys out of the fractional key space before assigning new ones.
+  await tx.$executeRaw`UPDATE ${table}
+    SET rank = '~' || id::text
+    WHERE dataset_id = ${datasetId}::uuid`;
+  await tx.$executeRaw`UPDATE ${table} AS row
+    SET rank = replacement.rank
+    FROM jsonb_to_recordset(${JSON.stringify(replacements)}::jsonb)
+      AS replacement(id uuid, rank text)
+    WHERE row.dataset_id = ${datasetId}::uuid AND row.id = replacement.id`;
+
+  return ranks[index];
 }

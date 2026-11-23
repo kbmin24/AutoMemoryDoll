@@ -20,5 +20,12 @@
       ></i>
       AI
     </RouterLink>
+    <RouterLink
+      to="/admin/system-information"
+      class="card flex-row items-center gap-4 border border-outline bg-base-100 p-5 font-semibold hover:bg-base-200 focus-visible:outline-2 focus-visible:outline-offset-2"
+    >
+      <i class="fa-solid fa-server text-muted" aria-hidden="true"></i>
+      System Information
+    </RouterLink>
   </div>
 </template>
